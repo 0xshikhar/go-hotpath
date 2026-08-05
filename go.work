@@ -1,0 +1,10 @@
+go 1.26
+
+use (
+	.
+	./spike
+	./doc/learn/labs/03-guard-cost
+)
+
+// cmd/hotpathcheck is a separate module (golang.org/x/tools dep) and joins
+// this workspace when it is created in Phase 4.

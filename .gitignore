@@ -1,0 +1,16 @@
+# Binaries
+/go-hotpath
+/hotpathcheck
+*.test
+*.out
+
+# Coverage
+coverage.*
+
+# Go workspace local overrides
+go.work.sum
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: test (go ${{ matrix.go }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.26', '1.27']
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          check-latest: true
+
+      # Core module: vet, race-enabled tests, and a benchmark print.
+      # Benchmarks are printed, not gated — shared runners are too noisy
+      # to gate on, and the numbers are what reviewers want to see.
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: go test -race -count=1 ./...
+
+      - name: benchmarks
+        run: go test -run=^$ -bench=. -benchmem -benchtime=200ms ./...
+
+      # The spike is a separate module in the workspace; its correctness
+      # and allocs-per-run tests keep the three books honest.
+      - name: spike tests
+        working-directory: ./spike
+        run: |
+          go vet ./...
+          go test -race -count=1 ./...
+
+      # Lab modules are in the workspace; run their guard-cost tests so
+      # the measured claims in doc/research stay reproducible.
+      - name: lab tests
+        run: go test -count=1 ./doc/learn/labs/03-guard-cost/...
