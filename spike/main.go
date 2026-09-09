@@ -3,6 +3,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"runtime"
@@ -180,16 +181,45 @@ func runE3() string {
 }
 
 func main() {
+	var (
+		e1      = flag.Bool("e1", true, "run E1 (original driver, rate matrix)")
+		e2      = flag.Bool("e2", true, "run E2 (original driver, noisy neighbor)")
+		e3      = flag.Bool("e3", true, "run E3 (handle check microbenchmark)")
+		e4      = flag.Bool("e4", false, "run E4 (bench harness rerun of E1)")
+		e5      = flag.Bool("e5", false, "run E5 (bench harness rerun of E2)")
+		dur     = flag.Duration("dur", 4*time.Second, "measure duration per cell")
+		warmup  = flag.Duration("warmup", 1*time.Second, "warmup duration per cell")
+		repeats = flag.Int("repeats", 1, "repeats per E4 cell")
+		write   = flag.Bool("write", false, "rewrite RESULTS.md (off by default: the header is curated)")
+	)
+	flag.Parse()
+
 	fmt.Println("=== Phase 0 Benchmark Spike ===")
 	fmt.Println("Warming up system...")
 	runtime.GC()
 
 	rates := []int{50_000, 100_000, 200_000}
-	duration := 4 * time.Second
+	duration := *dur
 
-	e1MD := runE1(rates, duration)
-	e2MD := runE2(100_000, duration)
-	e3MD := runE3()
+	var e1MD, e2MD, e3MD string
+	if *e1 {
+		e1MD = runE1(rates, duration)
+	}
+	if *e2 {
+		e2MD = runE2(100_000, duration)
+	}
+	if *e3 {
+		e3MD = runE3()
+	}
+	if *e4 {
+		fmt.Println(runE4(100_000, duration, *warmup, *repeats))
+	}
+	if *e5 {
+		fmt.Println(runE5(100_000, duration, *warmup))
+	}
+	if !*write {
+		return
+	}
 
 	// Assemble RESULTS.md. The header states the caveats up front; see
 	// doc/research/spec-review.md §6 for the reasoning.
