@@ -46,10 +46,10 @@ import (
 
 // Analyzer is the //hotpath:noalloc checker.
 var Analyzer = &analysis.Analyzer{
-	Name: "hotpathcheck",
-	Doc: "reports syntactic allocation sites inside functions marked //hotpath:noalloc",
-	Run:      run,
-	Requires: []*analysis.Analyzer{inspect.Analyzer},
+	Name:      "hotpathcheck",
+	Doc:       "reports syntactic allocation sites inside functions marked //hotpath:noalloc",
+	Run:       run,
+	Requires:  []*analysis.Analyzer{inspect.Analyzer},
 	FactTypes: []analysis.Fact{(*noallocFact)(nil)},
 }
 
@@ -57,7 +57,7 @@ var Analyzer = &analysis.Analyzer{
 // //hotpath:noalloc, so callers in other packages can be verified.
 type noallocFact struct{}
 
-func (*noallocFact) AFact()          {}
+func (*noallocFact) AFact()         {}
 func (*noallocFact) String() string { return "noalloc" }
 
 func run(pass *analysis.Pass) (any, error) {
@@ -69,7 +69,7 @@ func run(pass *analysis.Pass) (any, error) {
 		fd := n.(*ast.FuncDecl)
 		decls = append(decls, fd)
 		fn, _ := pass.TypesInfo.Defs[fd.Name].(*types.Func)
-		if fn != nil && hasDirective(fd.Doc, "hotpath:noalloc") {
+		if fn != nil && hasDirective(fd.Doc, "noalloc") {
 			annotated[fn] = true
 			pass.ExportObjectFact(fn, &noallocFact{})
 		}

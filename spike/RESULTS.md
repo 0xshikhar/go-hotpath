@@ -11,6 +11,10 @@
 5. One run per cell. Any number quoted publicly must be re-measured with ≥3 repeats.
 6. E3's 0.23 ns/op is below the cost of an L1 load — the compiler eliminated the work. Do not cite it.
 
+**2026-10-06 post-restructure audit finding:**
+
+7. E2's noisy-neighbor goroutines were **dead-code eliminated** — `buf := make([]byte, 1024); _ = buf` allocates nothing; the compiler removes the whole thing. E2's "neighbor" was a no-op; its max movement was scheduler noise. Fixed (`allocSink.Store(&buf)`), and the corrected rerun — E5, driven by `bench` — is in `../BENCHMARK.md`. The real E5 shows 338–354 GC cycles, ~10 GiB allocated by the neighbors, and Book C's p99 moving 0.9 µs → 16.5 µs despite allocating 0 B itself.
+
 ---
 
 ## Machine

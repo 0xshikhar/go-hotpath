@@ -2,4 +2,4 @@
 package crossdep
 
 //hotpath:noalloc
-func Exported() int { return 7 }
+func Exported() int { return 7 } // want Exported:"noalloc"

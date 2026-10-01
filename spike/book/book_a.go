@@ -36,6 +36,7 @@ func (b *BookA) Reset() {
 	b.asks = make(map[int64]*LevelA)
 }
 
+//hotpath:noalloc
 func (b *BookA) Apply(cmd *Command, ev *Event) {
 	ev.Kind = EventNone
 	ev.OrderID = cmd.OrderID

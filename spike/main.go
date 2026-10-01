@@ -98,8 +98,11 @@ func runE2(rate int, duration time.Duration) string {
 		for w := 0; w < 4; w++ {
 			go func() {
 				for atomic.LoadInt32(&stop) == 0 {
+					// Write through the slice so the compiler cannot
+					// dead-allocate it, then release it.
 					buf := make([]byte, 1024)
-					_ = buf
+					buf[0] = 1
+					allocSink.Store(&buf) // forces a real heap alloc
 					runtime.Gosched()
 				}
 			}()
@@ -267,3 +270,7 @@ func main() {
 		fmt.Printf("RESULTS.md successfully generated at %s!\n", path)
 	}
 }
+
+// allocSink forces neighbor-goroutine allocations to escape. Stored as a
+// pointer so concurrent writers are race-clean.
+var allocSink atomic.Pointer[[]byte]

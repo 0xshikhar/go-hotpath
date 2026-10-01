@@ -50,6 +50,8 @@ var snapSet = rtm.NewSet(
 // metrics semaphore once (~300 ns typical); do not call it per-request on a
 // contended process.
 func Read() Snapshot {
+	setsMu.Lock()
+	defer setsMu.Unlock()
 	snapSet.Read()
 	return Snapshot{
 		GoVersion:      runtime.Version(),

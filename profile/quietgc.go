@@ -36,15 +36,19 @@ var heapLiveOnce = sync.OnceValue(func() *rtm.Set {
 // STW plus marking). Call it on a cold path only.
 func QuietGC() QuietResult {
 	set := heapLiveOnce()
+	setsMu.Lock()
 	set.Read()
 	before := int64(set.Value(0).Uint64())
+	setsMu.Unlock()
 
 	start := time.Now()
 	runtime.GC()
 	dur := time.Since(start)
 
+	setsMu.Lock()
 	set.Read()
 	after := int64(set.Value(0).Uint64())
+	setsMu.Unlock()
 
 	return QuietResult{
 		Duration:       dur,

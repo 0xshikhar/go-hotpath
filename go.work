@@ -1,10 +1,11 @@
-go 1.26
+go 1.26.0
 
 use (
 	.
-	./spike
+	./cmd/hotpathcheck
 	./doc/learn/labs/03-guard-cost
+	./spike
 )
 
-// cmd/hotpathcheck is a separate module (golang.org/x/tools dep) and joins
-// this workspace when it is created in Phase 4.
+// cmd/hotpathcheck is a separate module so golang.org/x/tools stays out of
+// the core library's dependency graph.

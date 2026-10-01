@@ -5,6 +5,7 @@ import (
 	"math"
 	"runtime"
 	"runtime/debug"
+	"sync"
 
 	"github.com/0xshikhar/go-hotpath/internal/rtm"
 )
@@ -70,6 +71,11 @@ type Knobs struct {
 	GOMAXPROCS int64
 }
 
+// setsMu serializes all reads of the package-level metric sets. rtm.Set is
+// single-goroutine (a read writes into the sample buffer), and a status
+// endpoint calling Read while Apply is mid-verify would race without it.
+var setsMu sync.Mutex
+
 var knobSet = rtm.NewSet(
 	rtm.MetricGOGC,
 	rtm.MetricGOMemLimit,
@@ -77,6 +83,8 @@ var knobSet = rtm.NewSet(
 )
 
 func readKnobs() Knobs {
+	setsMu.Lock()
+	defer setsMu.Unlock()
 	knobSet.Read()
 	return Knobs{
 		GOGC:       int64(knobSet.Value(0).Uint64()), // off reports -1 as uint64

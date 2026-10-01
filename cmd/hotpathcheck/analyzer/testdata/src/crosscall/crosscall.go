@@ -5,6 +5,6 @@ package crosscall
 import "crossdep"
 
 //hotpath:noalloc
-func callsAnnotatedInOtherPkg() int {
+func callsAnnotatedInOtherPkg() int { // want callsAnnotatedInOtherPkg:"noalloc"
 	return crossdep.Exported() // ok — fact proves it
 }

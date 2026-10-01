@@ -40,6 +40,7 @@ func (m *FlatMapC) Reset() {
 	m.count = 0
 }
 
+//hotpath:noalloc
 func hash64(x uint64) uint32 {
 	x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9
 	x = (x ^ (x >> 27)) * 0x94d049bb133111eb
@@ -47,6 +48,7 @@ func hash64(x uint64) uint32 {
 	return uint32(x)
 }
 
+//hotpath:noalloc
 func (m *FlatMapC) Put(key uint64, val int32) bool {
 	if key == 0 {
 		return false
@@ -68,6 +70,7 @@ func (m *FlatMapC) Put(key uint64, val int32) bool {
 	}
 }
 
+//hotpath:noalloc
 func (m *FlatMapC) Get(key uint64) (int32, bool) {
 	if key == 0 {
 		return 0, false
@@ -85,6 +88,7 @@ func (m *FlatMapC) Get(key uint64) (int32, bool) {
 	}
 }
 
+//hotpath:noalloc
 func (m *FlatMapC) Delete(key uint64) bool {
 	if key == 0 {
 		return false
@@ -167,6 +171,7 @@ func (b *BookC) Reset() {
 	}
 }
 
+//hotpath:noalloc
 func (b *BookC) allocSlot() int32 {
 	n := len(b.freeList)
 	if n == 0 {
@@ -178,13 +183,15 @@ func (b *BookC) allocSlot() int32 {
 	return slot
 }
 
+//hotpath:noalloc
 func (b *BookC) freeSlot(slot int32) {
 	b.generation[slot]++
 	b.orders[slot] = OrderC{}
-	b.freeList = append(b.freeList, slot)
+	b.freeList = append(b.freeList, slot) //hotpath:allow free list is preallocated at capacity
 	b.live--
 }
 
+//hotpath:noalloc
 func (b *BookC) Apply(cmd *Command, ev *Event) {
 	ev.Kind = EventNone
 	ev.OrderID = cmd.OrderID

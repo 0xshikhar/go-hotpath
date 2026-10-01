@@ -47,3 +47,11 @@ jobs:
       # the measured claims in doc/research stay reproducible.
       - name: lab tests
         run: go test -count=1 ./doc/learn/labs/03-guard-cost/...
+
+      # The analyzer module (golang.org/x/tools dep) is in the workspace.
+      # Its fixture test builds the binary and vets spike/book.
+      - name: hotpathcheck tests
+        working-directory: ./cmd/hotpathcheck
+        run: |
+          go vet ./...
+          go test -count=1 ./...
