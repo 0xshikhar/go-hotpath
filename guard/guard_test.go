@@ -213,7 +213,7 @@ func TestGuardsConcurrentOwnGuardPerGoroutine(t *testing.T) {
 func BenchmarkWindow(b *testing.B) {
 	g := guard.New()
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		w := g.Begin()
 		sinkResult = w.End()
 	}
@@ -233,7 +233,7 @@ func BenchmarkWindowParallel(b *testing.B) {
 
 func BenchmarkExact(b *testing.B) {
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		guard.Exact(func() { sinkResult = guard.Result{} })
 	}
 }

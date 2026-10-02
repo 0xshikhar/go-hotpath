@@ -46,6 +46,14 @@ func Check() error {
 	return &UnsupportedError{Names: bad}
 }
 
+// Available reports whether the named metric exists on this toolchain with
+// any kind. Use it to degrade gracefully on older Go releases — for example
+// /sched/pauses/* only exists on Go 1.23+.
+func Available(name string) bool {
+	_, ok := catalog()[name]
+	return ok
+}
+
 func require(name string, scalar bool) metrics.ValueKind {
 	d, ok := catalog()[name]
 	if !ok {

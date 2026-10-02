@@ -47,13 +47,13 @@ func TestNewHistSetRejectsScalar(t *testing.T) {
 }
 
 func TestHistSetRead(t *testing.T) {
-	h := NewHistSet(MetricSchedLatencies, MetricSchedPausesGC)
+	h := NewHistSet(MetricSchedLatencies, MetricHeapAllocsBySize)
 	h.Read()
 	hist := h.Histogram(0)
 	if hist == nil || len(hist.Counts) == 0 {
 		t.Fatal("sched latencies histogram empty")
 	}
-	if got := h.Index(MetricSchedPausesGC); got != 1 {
+	if got := h.Index(MetricHeapAllocsBySize); got != 1 {
 		t.Fatalf("Index = %d, want 1", got)
 	}
 }
@@ -106,7 +106,7 @@ func BenchmarkSetRead5(b *testing.B) {
 		MetricLimiterLast,
 	)
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		s.Read()
 	}
 }
@@ -129,9 +129,9 @@ func BenchmarkSetRead5Parallel(b *testing.B) {
 }
 
 func BenchmarkHistSetRead(b *testing.B) {
-	h := NewHistSet(MetricSchedLatencies, MetricSchedPausesGC)
+	h := NewHistSet(MetricSchedLatencies, MetricHeapAllocsBySize)
 	b.ReportAllocs()
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		h.Read()
 	}
 }

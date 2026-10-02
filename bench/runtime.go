@@ -10,10 +10,14 @@ import (
 
 // runCapture snapshots the runtime counters and histograms a Report needs.
 // All reads are cold-path: HistSet allocates its bucket slices.
+//
+// /sched/pauses/total/gc only exists on Go 1.23+; on older toolchains the
+// GCPause* report fields stay zero (documented) rather than fail.
 type runCapture struct {
-	scalars *rtm.Set
-	cpu     *rtm.Set
-	hists   *rtm.HistSet
+	scalars   *rtm.Set
+	cpu       *rtm.Set
+	hists     *rtm.HistSet
+	pauseIdx  int // index of MetricSchedPausesGC in hists, or -1
 }
 
 // Indexes into runCapture.scalars.
@@ -34,13 +38,20 @@ const (
 	cGCTotal
 )
 
-// Indexes into runCapture.hists.
-const (
-	hSchedLat = iota
-	hSchedPauseGC
-)
+// snap holds one point-in-time read of a runCapture.
+type snap struct {
+	cycles, forced, allocBytes, heapLive, limiter uint64
+	user, assist, dedicated, pause, gcTotal       float64 // cpu-seconds
+	schedLat, pauseGC                             *metrics.Float64Histogram
+}
 
 func newRunCapture() *runCapture {
+	histNames := []string{rtm.MetricSchedLatencies}
+	pauseIdx := -1
+	if rtm.Available(rtm.MetricSchedPausesGC) {
+		pauseIdx = len(histNames)
+		histNames = append(histNames, rtm.MetricSchedPausesGC)
+	}
 	return &runCapture{
 		scalars: rtm.NewSet(
 			rtm.MetricGCCyclesTotal,
@@ -56,25 +67,16 @@ func newRunCapture() *runCapture {
 			rtm.MetricCPUGCPause,
 			rtm.MetricCPUGCTotal,
 		),
-		hists: rtm.NewHistSet(
-			rtm.MetricSchedLatencies,
-			rtm.MetricSchedPausesGC,
-		),
+		hists:    rtm.NewHistSet(histNames...),
+		pauseIdx: pauseIdx,
 	}
-}
-
-// snap holds one point-in-time read of a runCapture.
-type snap struct {
-	cycles, forced, allocBytes, heapLive, limiter uint64
-	user, assist, dedicated, pause, gcTotal       float64 // cpu-seconds
-	schedLat, pauseGC                             *metrics.Float64Histogram
 }
 
 func (rc *runCapture) read() snap {
 	rc.scalars.Read()
 	rc.cpu.Read()
 	rc.hists.Read()
-	return snap{
+	s := snap{
 		cycles:     rc.scalars.Value(sCycles).Uint64(),
 		forced:     rc.scalars.Value(sForced).Uint64(),
 		allocBytes: rc.scalars.Value(sAllocBytes).Uint64(),
@@ -85,9 +87,12 @@ func (rc *runCapture) read() snap {
 		dedicated:  rc.cpu.Value(cGCDedicated).Float64(),
 		pause:      rc.cpu.Value(cGCPause).Float64(),
 		gcTotal:    rc.cpu.Value(cGCTotal).Float64(),
-		schedLat:   cloneHist(rc.hists.Histogram(hSchedLat)),
-		pauseGC:    cloneHist(rc.hists.Histogram(hSchedPauseGC)),
+		schedLat:   cloneHist(rc.hists.Histogram(0)),
 	}
+	if rc.pauseIdx >= 0 {
+		s.pauseGC = cloneHist(rc.hists.Histogram(rc.pauseIdx))
+	}
+	return s
 }
 
 // readCPUOnly re-reads just the CPU classes, used after a final runtime.GC()
@@ -108,8 +113,12 @@ func cloneHist(h *metrics.Float64Histogram) *metrics.Float64Histogram {
 }
 
 // histDelta returns after minus before counts, saturating per bucket (a
-// counter reset between reads clamps to 0 rather than underflowing).
+// counter reset between reads clamps to 0 rather than underflowing). Nil
+// histograms — a metric unavailable on this toolchain — yield a nil delta.
 func histDelta(before, after *metrics.Float64Histogram) []uint64 {
+	if before == nil || after == nil {
+		return nil
+	}
 	n := len(before.Counts)
 	if len(after.Counts) < n {
 		n = len(after.Counts)

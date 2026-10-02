@@ -139,7 +139,7 @@ func TestCompare(t *testing.T) {
 func BenchmarkHistogramRecord(b *testing.B) {
 	var h histogram
 	b.ReportAllocs()
-	for b.Loop() {
-		h.Record(time.Duration(b.N & 0xFFFFF))
+	for i := 0; i < b.N; i++ {
+		h.Record(time.Duration(i & 0xFFFFF))
 	}
 }
