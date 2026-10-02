@@ -1,6 +1,6 @@
 module spike
 
-go 1.26
+go 1.22.0
 
 require github.com/0xshikhar/go-hotpath v0.0.0
 
