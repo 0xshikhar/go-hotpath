@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go: ['1.26', '1.27']
+        go: ['1.22', '1.26', '1.27']
         os: [ubuntu-latest, macos-latest]
 
     steps:
@@ -48,10 +48,10 @@ jobs:
       - name: lab tests
         run: go test -count=1 ./doc/learn/labs/03-guard-cost/...
 
-      # The analyzer module (golang.org/x/tools dep) is in the workspace.
-      # Its fixture test builds the binary and vets spike/book.
+      # The analyzer module is standalone (not in go.work): it keeps the
+      # x/tools dep and a newer toolchain floor out of the library modules.
       - name: hotpathcheck tests
         working-directory: ./cmd/hotpathcheck
         run: |
-          go vet ./...
-          go test -count=1 ./...
+          GOWORK=off go vet ./...
+          GOWORK=off go test -count=1 ./...

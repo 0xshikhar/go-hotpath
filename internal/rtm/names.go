@@ -186,9 +186,4 @@ var optional = map[string]metrics.ValueKind{
 	// Go 1.25+ (cgroup-aware scheduling godebug counters)
 	MetricGodebugContainerMaxProcs: metrics.KindUint64,
 	MetricGodebugUpdateMaxProcs:    metrics.KindUint64,
-	metrics.KindUint64,
-	MetricFinalizersQueued:   metrics.KindUint64,
-	MetricFinalizersExecuted: metrics.KindUint64,
-	MetricCleanupsQueued:     metrics.KindUint64,
-	MetricCleanupsExecuted:   metrics.KindUint64,
 }

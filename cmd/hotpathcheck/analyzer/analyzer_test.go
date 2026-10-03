@@ -32,11 +32,13 @@ func TestSpikeBookFixture(t *testing.T) {
 		t.Fatalf("build tool: %v\n%s", err, out)
 	}
 
-	root, err := filepath.Abs("../../..")
+	root, err := filepath.Abs("../../../spike")
 	if err != nil {
 		t.Fatal(err)
 	}
-	vet := exec.Command("go", "vet", "-vettool", bin, "spike/book")
+	// Run inside the spike module so `book` resolves whether or not the
+	// go.work workspace is active (CI also tests with GOWORK=off).
+	vet := exec.Command("go", "vet", "-vettool", bin, "./book")
 	vet.Dir = root
 	out, _ := vet.CombinedOutput()
 	text := string(out)

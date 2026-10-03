@@ -7,7 +7,7 @@ Every number below is reproducible. Method first, numbers second.
 | | |
 |---|---|
 | Machine | Apple M4 Pro, 24 GB, macOS (darwin/arm64) |
-| Go | go1.26.0 |
+| Toolchains | **go1.22.12** (library floor) and **go1.26.0** (dev/default); `hotpathcheck` itself is built on 1.26 but vets any version's code |
 | Harness | `bench` — open-loop, intended-time pacing; **late ops recorded, never dropped** |
 | Workload | order-book `Apply` per op: 50% new-limit / 30% cancel / 10% replace-down / 10% market-cross, 4096 ticks, 100k live-order capacity |
 | Cells | 100k ops/s, 4 s measure + 1 s warmup per cell, 3 repeats (E4); 4 s single runs (E5) |
@@ -19,19 +19,27 @@ overestimate a tail, never hide it. `Latency` is done−intended (corrected);
 
 ## 1. Instrumentation overhead — the product's own cost
 
-| Operation | ns/op | allocs |
-|---|---|---|
-| `guard` `Begin`+`End` window | **452** | **0** |
-| `guard` window, parallel (per-goroutine Guards) | 1,012 | 0 |
-| `guard.Exact` (2× STW ReadMemStats — tests only) | ~51,000 | 4 |
-| `rtm.Set.Read` (5 scalars, reused buffer) | 232 | 0 |
-| `bench` histogram `Record` | **2.0** | **0** |
-| `profile.Read` (Snapshot, 8 scalars) | ~350 | 0 |
+Measured on **both supported toolchain generations** (same machine):
 
-Reproduce: `go test -run=^$ -bench=. -benchmem ./guard ./bench ./internal/rtm`.
+| Operation | go1.22.12 | go1.26.0 | allocs (both) |
+|---|---|---|---|
+| `guard` `Begin`+`End` window | 502 ns | **452 ns** | 0 |
+| `guard` window, parallel (per-goroutine Guards) | 1,312 ns | 1,012 ns | 0 |
+| `guard.Exact` (2× STW ReadMemStats — tests only) | 75.8 µs | ~51 µs | 4 |
+| `rtm.Set.Read` (5 scalars, reused buffer) | 239 ns | 232 ns | 0 |
+| `bench` histogram `Record` | **1.97 ns** | **2.0 ns** | 0 |
 
-A 452 ns guard around a ≥50 µs batch costs <1%. Around a 200 ns hot op it
-costs ~3× — that's why the docs steer `guard` at batch/session windows.
+Reproduce: `go test -run=^$ -bench=. -benchmem ./guard ./bench ./internal/rtm`
+(under go1.22: `GOTOOLCHAIN=go1.22.12 GOWORK=off go test ...`).
+
+Two findings in the version delta: the **zero-alloc guarantees hold on both**
+toolchains (the reuse-buffer trick predates and outlives any single GC), and
+`Exact` is ~50% slower on go1.22 — the pre-Green-Tea collector spends longer
+in its stop-the-world sweep that `ReadMemStats` triggers. Steady-state reads
+(`Set`, `HistSet`, `Record`) are toolchain-flat: they never touch the GC.
+
+A ~450–500 ns guard around a ≥50 µs batch costs <1%. Around a 200 ns hot op
+it costs ~2.5× — that's why the docs steer `guard` at batch/session windows.
 
 ## 2. E4 — the clean run, corrected harness
 
@@ -109,7 +117,40 @@ never prove:
    climb — the harness couldn't keep up, which is a capacity signal, not a
    tail signal.
 
-## 5. What changed vs the original spike
+## 5. Toolchain comparison — same workload, go1.22 vs go1.26
+
+E4 rerun on **go1.22.12** (the library's minimum: pre-Green-Tea collector,
+pre-`/sched/pauses` metrics) vs **go1.26.0**. Same flags:
+`-e4 -dur=2s -warmup=500ms -repeats=1` — one rep, so treat as directional,
+not quotable.
+
+| Cell | 1.22 p99 | 1.26 p99 | 1.22 p99.9 | 1.26 p99.9 | 1.22 svc p99.9 | 1.26 svc p99.9 |
+|---|---|---|---|---|---|---|
+| A default | 9.8 µs | 8.0 µs | 21.3 µs | 35.0 µs | 13.9 µs | 14.1 µs |
+| A GOGC=off | 9.9 µs | 6.1 µs | 19.3 µs | 13.3 µs | 13.1 µs | 9.6 µs |
+| A silent(1GiB) | 9.3 µs | 6.9 µs | 15.6 µs | 32.2 µs | 12.2 µs | 11.3 µs |
+| B default | 3.2 µs | 3.2 µs | 10.7 µs | 16.4 µs | 3.6 µs | 3.4 µs |
+| C default | 3.3 µs | **1.2 µs** | 13.0 µs | 10.9 µs | 4.0 µs | 1.1 µs |
+| C silent(1GiB) | 3.8 µs | 3.0 µs | 12.8 µs | 15.8 µs | 3.2 µs | 3.1 µs |
+
+What to read and not read into it:
+
+- **No GC cycle completed on either toolchain** (all `GC=0`) — the
+  differences are allocation-path and scheduler noise, not collection.
+- `svc p99.9` is nearly toolchain-flat — as it should be: service time is
+  dominated by the machine and the data structure, not the GC version.
+- Book C's p99 looks better on 1.26 (1.2 vs 3.3 µs) — consistent with the
+  Green Tea direction (1.25+) — but a single rep can't prove it; the
+  multi-repeat table above on 1.26 is the quotable number set.
+- **Metric coverage differs by version**: on go1.22 the `GCPause*` report
+  fields are silently 0 (the histogram doesn't exist pre-1.23). `bench`
+  degrades rather than fails — intentional.
+- Version support reality: `guard`/`profile`/`bench` run on go1.22+;
+  `hotpathcheck` is *built* with 1.26 but vets code targeting any version
+  (verified: the 1.26-built binary produces the same 4 diagnostics when
+  driven by go1.22's `go vet`).
+
+## 6. What changed vs the original spike
 
 | Original `spike` | Corrected `bench` |
 |---|---|

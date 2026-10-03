@@ -14,10 +14,10 @@ import (
 // /sched/pauses/total/gc only exists on Go 1.23+; on older toolchains the
 // GCPause* report fields stay zero (documented) rather than fail.
 type runCapture struct {
-	scalars   *rtm.Set
-	cpu       *rtm.Set
-	hists     *rtm.HistSet
-	pauseIdx  int // index of MetricSchedPausesGC in hists, or -1
+	scalars  *rtm.Set
+	cpu      *rtm.Set
+	hists    *rtm.HistSet
+	pauseIdx int // index of MetricSchedPausesGC in hists, or -1
 }
 
 // Indexes into runCapture.scalars.

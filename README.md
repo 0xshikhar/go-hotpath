@@ -95,7 +95,19 @@ See [BENCHMARK.md](BENCHMARK.md) for the full methodology. The headline:
 
 ## Requirements
 
-- Go 1.26+ (CI runs 1.26 and 1.27 on linux/macOS)
+- Library: **Go 1.26+ recommended** (developed and measured here — newer GC,
+  richer metrics). **Minimum supported: Go 1.22** — everything works; the
+  only gap is `bench`'s `GCPause*` fields reading 0 (the `/sched/pauses`
+  histograms don't exist before 1.23). The floor is the oldest release on
+  which all required runtime metrics exist; we bump it lazily — only when a
+  needed feature forces it — and CI covers the floor, current, and next
+  release (1.22 / 1.26 / 1.27 × linux/macOS). Wider than Go's own support
+  window on purpose: latency-sensitive platforms pin toolchains
+  (`GOTOOLCHAIN=local`), and a library tag should not force a migration.
+- `hotpathcheck` (the `go vet` tool) builds with Go 1.26+, but analyzes code
+  of *any* Go version — `go install` automatically fetches the required
+  toolchain on older Go (since Go 1.21). It shares no code with the library
+  modules.
 - No external dependencies for the library; `cmd/hotpathcheck` uses
   `golang.org/x/tools` in its own module
 
