@@ -1,0 +1,38 @@
+name: Bug report
+description: Something is broken or measured behavior contradicts the docs
+labels: [bug]
+body:
+  - type: input
+    attributes:
+      label: Go version
+      description: Output of `go version` (e.g. go1.26.0 darwin/arm64)
+      placeholder: go1.26.0 darwin/arm64
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: go-hotpath version
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What happened
+      description: What you ran and what you observed. For measurement claims, paste the raw output.
+      placeholder: |
+        guard.Assert failed on code that should be alloc-free:
+        <code, output>
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Expected behavior
+      placeholder: What the docs or your mental model said should happen
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Minimal reproducer
+      description: The smallest program or test that demonstrates it. Gist/playground links fine.
+    validations:
+      required: false

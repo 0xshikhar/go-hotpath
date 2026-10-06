@@ -1,0 +1,23 @@
+name: Feature request
+description: A capability the toolkit is missing
+labels: [enhancement]
+body:
+  - type: textarea
+    attributes:
+      label: The latency problem
+      description: What are you trying to measure, prevent, or control — and why can't the current API do it? Describe the problem, not the API.
+      placeholder: e.g. our engine can't tell mark assists apart from completed GC cycles inside a window
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Proposed shape (optional)
+      description: If you have an API or flag in mind, sketch it — but the problem statement matters more.
+    validations:
+      required: false
+  - type: checkboxes
+    attributes:
+      label: Fit check
+      options:
+        - label: This is GC/latency/alloc-related, not a general-purpose lint or profiling feature
+          required: true
