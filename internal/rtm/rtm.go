@@ -48,7 +48,8 @@ func Check() error {
 
 // Available reports whether the named metric exists on this toolchain with
 // the kind this module expects. Use it to degrade gracefully on older Go
-// releases — for example /sched/pauses/* only exists on Go 1.23+. A name not
+// releases — for example the /gc/finalizers/* counters only exist on Go
+// 1.26+. A name not
 // declared in names.go is never available.
 func Available(name string) bool {
 	want, ok := registry[name]

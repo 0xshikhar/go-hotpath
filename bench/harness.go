@@ -145,11 +145,6 @@ func (h *Harness) Run(fn func()) Report {
 
 	latDelta := histDelta(before.schedLat, after.schedLat)
 	pauseDelta := histDelta(before.pauseGC, after.pauseGC)
-	var pauseMax, pauseP99 time.Duration
-	if pauseDelta != nil {
-		pauseMax = deltaMax(pauseDelta, after.pauseGC.Buckets)
-		pauseP99 = deltaQuantile(pauseDelta, after.pauseGC.Buckets, 0.99)
-	}
 
 	return Report{
 		Label:      h.label,
@@ -175,8 +170,8 @@ func (h *Harness) Run(fn func()) Report {
 		GCDedCPU:      secToDur(after.dedicated - before.dedicated),
 		GCPauseCPU:    secToDur(after.pause - before.pause),
 
-		GCPauseMax:      pauseMax,
-		GCPauseP99:      pauseP99,
+		GCPauseMax:      deltaMax(pauseDelta, after.pauseGC.Buckets),
+		GCPauseP99:      deltaQuantile(pauseDelta, after.pauseGC.Buckets, 0.99),
 		SchedLatencyP99: deltaQuantile(latDelta, after.schedLat.Buckets, 0.99),
 
 		HeapLiveStart: before.heapLive,

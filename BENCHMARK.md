@@ -1,161 +1,188 @@
 # Benchmarks
 
-Every number below is reproducible. Method first, numbers second.
+Every number below is reproducible with the commands in each section. Method
+first, numbers second.
 
-## Environment & methodology
+## Environment & method
 
 | | |
 |---|---|
-| Machine | Apple M4 Pro, 24 GB, macOS (darwin/arm64) |
-| Toolchains | **go1.22.12** (library floor) and **go1.26.0** (dev/default); `hotpathcheck` itself is built on 1.26 but vets any version's code |
-| Harness | `bench` — open-loop, intended-time pacing; **late ops recorded, never dropped** |
+| Date | 2026-10-06 |
+| Machine | Apple M4 Pro (10 performance + 4 efficiency cores), 24 GB, macOS, on AC power |
+| Toolchains | **go1.22.12** (library floor), **go1.26.8** (recommended), **go1.27.1** (latest) — selected with `GOTOOLCHAIN` |
+| Harness | `bench` — open-loop, intended-time pacing; late ops recorded, never dropped |
 | Workload | order-book `Apply` per op: 50% new-limit / 30% cancel / 10% replace-down / 10% market-cross, 4096 ticks, 100k live-order capacity |
-| Cells | 100k ops/s, 4 s measure + 1 s warmup per cell, 3 repeats (E4); 4 s single runs (E5) |
-| Reproduce | `go run ./spike -e1=false -e2=false -e3=false -e4 -e5 -dur=4s -repeats=3` |
+| Cells | 100k ops/s, 1 s warmup + 4 s measured per cell, **3 repeats**, median reported |
 
-Percentiles report each histogram bucket's **upper bound** — they can only
-overestimate a tail, never hide it. `Latency` is done−intended (corrected);
-`svc` is done−actual (what a closed loop prints).
+Reading rules:
 
-## 1. Instrumentation overhead — the product's own cost
+- Percentiles are histogram bucket **upper bounds** — they can only overestimate.
+  `Latency` (`p99`, `p99.9`) is done−intended, corrected for coordinated
+  omission; `svc` is done−actual, what a closed-loop benchmark would print.
+- The machine was a working laptop (browser, IDE, a disk scanner running;
+  load average 5–15 on 14 cores). That noise lands in **p99.9 and max**,
+  which vary run to run by 10–100×; **p50, p99 and service time are stable**
+  across repeats and toolchains. Quote those, not the extremes.
+- E4 cells complete **zero** GC cycles, so a late op there is machine
+  interference by definition: E4 repeats with more than 1.5% late ops are
+  discarded, and the table says how many survived. E5 is not filtered — its
+  lateness is the effect being measured.
 
-Measured on **both supported toolchain generations** (same machine):
+## 1. Instrumentation overhead — the library's own cost
 
-| Operation | go1.22.12 | go1.26.0 | allocs (both) |
-|---|---|---|---|
-| `guard` `Begin`+`End` window | 502 ns | **452 ns** | 0 |
-| `guard` window, parallel (per-goroutine Guards) | 1,312 ns | 1,012 ns | 0 |
-| `guard.Exact` (2× STW ReadMemStats — tests only) | 75.8 µs | ~51 µs | 4 |
-| `rtm.Set.Read` (5 scalars, reused buffer) | 239 ns | 232 ns | 0 |
-| `bench` histogram `Record` | **1.97 ns** | **2.0 ns** | 0 |
+`go test -run=^$ -bench=. -benchmem -count=3 ./guard ./internal/rtm ./bench`,
+median of 3:
 
-Reproduce: `go test -run=^$ -bench=. -benchmem ./guard ./bench ./internal/rtm`
-(under go1.22: `GOTOOLCHAIN=go1.22.12 GOWORK=off go test ...`).
+| Operation | go1.22.12 | go1.26.8 | go1.27.1 | allocs |
+|---|---|---|---|---|
+| `guard` `Begin`+`End` window | 471 ns | 443 ns | 438 ns | 0 |
+| `guard` window, parallel (one Guard per goroutine) | 1,205 ns | 964 ns | 898 ns | 0 |
+| `guard.Exact` (2× stop-the-world `ReadMemStats`; tests only) | 50.5 µs | 50.3 µs | 48.6 µs | 4 |
+| `rtm.Set.Read` (5 scalars, reused buffer) | 233 ns | 215 ns | 211 ns | 0 |
+| `rtm.Set.Read`, parallel | 576 ns | 480 ns | 447 ns | 0 |
+| `rtm.HistSet.Read` (2 histograms, reused) | 271 ns | 260 ns | 263 ns | 0 |
+| `bench` histogram `Record` | 1.8 ns | 1.9 ns | 1.8 ns | 0 |
 
-Two findings in the version delta: the **zero-alloc guarantees hold on both**
-toolchains (the reuse-buffer trick predates and outlives any single GC), and
-`Exact` is ~50% slower on go1.22 — the pre-Green-Tea collector spends longer
-in its stop-the-world sweep that `ReadMemStats` triggers. Steady-state reads
-(`Set`, `HistSet`, `Record`) are toolchain-flat: they never touch the GC.
+The zero-allocation guarantees hold on every supported toolchain. Contended
+(parallel) reads improve on newer Go — the `runtime/metrics` read path
+serializes on a runtime semaphore, and that path got cheaper. A ~450 ns
+window around a ≥50 µs batch costs under 1%; around a 200 ns operation it
+would cost more than the operation, which is why `guard` belongs on batch or
+session boundaries.
 
-A ~450–500 ns guard around a ≥50 µs batch costs <1%. Around a 200 ns hot op
-it costs ~2.5× — that's why the docs steer `guard` at batch/session windows.
+## 2. E5 — a zero-allocation book next to allocating neighbors
 
-## 2. E4 — the clean run, corrected harness
+Four neighbor goroutines run alongside the book in three modes: **clean**
+(none), **+4spin** (busy, never allocate — the control), and **+4alloc**
+(each allocates 1 KiB per iteration). p99 latency, median of 3 runs:
 
-100k ops/s, 4 s cells, 3 repeats. **No GC cycle completed in any cell** — at
-this duration and allocation rate, none of the books trigger the collector.
-That is itself the result: at this scale the books' difference is
-allocation-path cost, not GC interference.
+| Book | Neighbors | go1.22.12 | go1.26.8 | go1.27.1 | GC cycles (1.26.8) |
+|---|---|---|---|---|---|
+| **C** (0 allocs/op) | clean | 3.1 µs | 3.2 µs | 3.3 µs | 0 |
+| **C** | +4spin | 2.5 µs | 8.5 µs | 6.5 µs | 0 |
+| **C** | **+4alloc** | **30 µs** | **33 µs** | **35 µs** | **354** |
+| A (~3 allocs/op) | clean | 10 µs | 6.7 µs | 6.8 µs | 0 |
+| A | +4spin | 11 µs | 8.7 µs | 7.8 µs | 0 |
+| A | +4alloc | 40 µs | 34 µs | 42 µs | 363 |
 
-| Impl | Config | rep | p50 | p99 | p99.9 | svc p99.9 | alloc |
-|---|---|---|---|---|---|---|---|
-| A | default | r3 | 333 ns | 5.46 µs | 13.5 µs | 7.09 µs | 11.7 MiB |
-| A | GOGC=off | r3 | 333 ns | 5.67 µs | 13.2 µs | 7.30 µs | 11.7 MiB |
-| A | silent(1GiB) | r3 | 333 ns | 5.38 µs | 15.9 µs | 7.54 µs | 11.8 MiB |
-| B | default | r3 | 250 ns | 1.00 µs | 9.96 µs | 3.25 µs | 0 B |
-| C | default | r3 | 250 ns | 1.25 µs | 15.1 µs | 3.29 µs | 0 B |
-| C | silent(1GiB) | r3 | 250 ns | 0.88 µs | 8.00 µs | 1.08 µs | 0 B |
+> **Book C allocates nothing, yet allocating neighbors in the same process
+> move its p99 ~10× (3.2 µs → 33 µs on go1.26.8), on every toolchain from 1.22
+> to 1.27. Equally busy neighbors that don't allocate move it far less (to
+> 2.5–8.5 µs). The cause is the garbage collector, not CPU contention.**
 
-What it says, carefully:
+Attribution for the go1.26.8 runs (median of 3):
 
-- **Allocation cost is visible without any GC.** Book A pays ~3× at p50/p99
-  purely for allocating ~3 objects per op — heap growth, cache misses,
-  allocator bookkeeping — with zero cycles fired.
-- **B and C are within noise of each other** at steady state. Pointer-freedom
-  buys its advantage when the GC is *active*, not when it's absent — which is
-  what E5 demonstrates.
-- GC-config columns are interchangeable here because **nothing collected**.
-  Quoting them as "GOGC=off didn't help" would be wrong — there was nothing
-  to help.
-- `max` per cell is a single sample and unstable (60–950 µs across rows);
-  don't quote it.
-
-## 3. E5 — the noisy neighbor, now actually allocating
-
-4 allocating goroutines alongside the book. **Audit note:** the original
-spike's neighbors were dead-code eliminated (`make` + `_ = buf`); this rerun
-forces real allocations, so these are the first valid noisy-neighbor numbers.
-
-| Impl | Neighbor | p99 | p99.9 | max | svc p99.9 | GC cycles | alloc (proc-wide) | assist CPU |
-|---|---|---|---|---|---|---|---|---|
-| A | none | 5.3 µs | 18.3 µs | 220 µs | 7.4 µs | 0 | 11.8 MiB | 0 |
-| A | 4 alloc goroutines | **27.1 µs** | **70.3 µs** | 134 µs | 12.8 µs | **354** | 10.0 GiB | 9.2 ms |
-| C | none | 0.9 µs | 10.8 µs | 62 µs | 1.25 µs | 0 | 0 B | 0 |
-| C | 4 alloc goroutines | **16.5 µs** | **62.7 µs** | 124 µs | 2.96 µs | **338** | 10.2 GiB | 8.3 ms |
-
-The headline finding, stated precisely:
-
-> **Book C allocates zero bytes, yet 338 GC cycles in the same process moved
-> its p99 from 0.9 µs to 16.5 µs — an 18× tail regression caused entirely by
-> another goroutine's allocation.**
-
-And the columns now settle *which* mechanism did it — the thing E2 could
-never prove:
-
-- `GC=338` cycles ran in the window (exact count).
-- `assist CPU = 8.25 ms` of mark work ran **inside the book's own goroutine**
-  — the assist tax, directly attributed.
-- `svc p99.9` stayed at 2.96 µs while `Latency p99.9` hit 62.7 µs — the
-  tail is lateness (scheduler preemption + STW), not slower work. A
-  closed-loop benchmark would have printed `p99.9 ≈ 3 µs` and missed it.
-- `alloc` is process-wide: C's own share is 0; the 10.2 GiB is the
-  neighbors' — the counter can't attribute it to them, which is exactly the
-  same-process-isolation argument the docs make.
-
-## 4. Known caveats — read before quoting
-
-1. **3 repeats, one machine, one toolchain.** Single-run cells have ±2× max
-   variance. p50/p90/p99 are stable; max is not.
-2. **GOGC config rows are interchangeable in E4** because no cycle fired.
-   The silent-window difference is only visible *during* GC activity — E5
-   is the discriminating experiment.
-3. **The benchmark process itself allocates** (pre-generated commands,
-   harness state). `alloc` is process-wide — interpret it as "did the
-   process allocate", not "did the book".
-4. `rate × duration` beyond what the machine can sustain makes `Late%`
-   climb — the harness couldn't keep up, which is a capacity signal, not a
-   tail signal.
-
-## 5. Toolchain comparison — same workload, go1.22 vs go1.26
-
-E4 rerun on **go1.22.12** (the library's minimum: pre-Green-Tea collector,
-pre-`/sched/pauses` metrics) vs **go1.26.0**. Same flags:
-`-e4 -dur=2s -warmup=500ms -repeats=1` — one rep, so treat as directional,
-not quotable.
-
-| Cell | 1.22 p99 | 1.26 p99 | 1.22 p99.9 | 1.26 p99.9 | 1.22 svc p99.9 | 1.26 svc p99.9 |
+| Cell | GC cycles | GC CPU (process) | GC STW p99 | GC STW max | svc p99.9 | late ops |
 |---|---|---|---|---|---|---|
-| A default | 9.8 µs | 8.0 µs | 21.3 µs | 35.0 µs | 13.9 µs | 14.1 µs |
-| A GOGC=off | 9.9 µs | 6.1 µs | 19.3 µs | 13.3 µs | 13.1 µs | 9.6 µs |
-| A silent(1GiB) | 9.3 µs | 6.9 µs | 15.6 µs | 32.2 µs | 12.2 µs | 11.3 µs |
-| B default | 3.2 µs | 3.2 µs | 10.7 µs | 16.4 µs | 3.6 µs | 3.4 µs |
-| C default | 3.3 µs | **1.2 µs** | 13.0 µs | 10.9 µs | 4.0 µs | 1.1 µs |
-| C silent(1GiB) | 3.8 µs | 3.0 µs | 12.8 µs | 15.8 µs | 3.2 µs | 3.1 µs |
+| C clean | 0 | 0 | — | — | 3.3 µs | 0.42% |
+| C +4spin | 0 | 0 | — | — | 2.8 µs | 0.87% |
+| C +4alloc | 354 | 271 ms | 98 µs | 229 µs | 3.1 µs | 1.71% |
+| A +4alloc | 363 | 1,334 ms | 98 µs | 164 µs | 15 µs | 1.85% |
 
-What to read and not read into it:
+What the columns establish:
 
-- **No GC cycle completed on either toolchain** (all `GC=0`) — the
-  differences are allocation-path and scheduler noise, not collection.
-- `svc p99.9` is nearly toolchain-flat — as it should be: service time is
-  dominated by the machine and the data structure, not the GC version.
-- Book C's p99 looks better on 1.26 (1.2 vs 3.3 µs) — consistent with the
-  Green Tea direction (1.25+) — but a single rep can't prove it; the
-  multi-repeat table above on 1.26 is the quotable number set.
-- **Metric coverage differs by version**: on go1.22 the `GCPause*` report
-  fields are silently 0 (the histogram doesn't exist pre-1.23). `bench`
-  degrades rather than fails — intentional.
-- Version support reality: `guard`/`profile`/`bench` run on go1.22+;
-  `hotpathcheck` is *built* with 1.26 but vets code targeting any version
-  (verified: the 1.26-built binary produces the same 4 diagnostics when
-  driven by go1.22's `go vet`).
+- **Service time does not move** (C: 3.3 µs clean, 3.1 µs with allocating
+  neighbors). The book does the same work; ops start late. A closed-loop
+  benchmark would report no regression at all.
+- **The mechanism is process-wide GC activity**: ~350 cycles in 4 s, two
+  stop-the-world pauses each (p99 ~100 µs), plus background mark workers
+  taking cores. Book C cannot be charged mark assists — it never allocates;
+  the GC CPU column is the whole process, almost all of it caused by the
+  neighbors. That is the point: the process is the interference boundary.
+- **A's own allocations add GC CPU** (1,334 ms vs 271 ms with the same
+  neighbors) — the allocating book makes every cycle more expensive for
+  itself.
+- An earlier run on a quieter machine (go1.26.0) measured C at 0.9 µs clean
+  and 16.5 µs with allocating neighbors (18×). The baseline is
+  load-sensitive; the degraded p99 and the cycle counts are not.
 
-## 6. What changed vs the original spike
+Reproduce (repeat 3×, take medians):
 
-| Original `spike` | Corrected `bench` |
+```bash
+cd spike && GOTOOLCHAIN=go1.26.8 go run . -e1=false -e2=false -e3=false -e5 -dur=4s -warmup=1s
+```
+
+## 3. E4 — the books without GC pressure
+
+The full matrix — books × {default, `GOGC=off`, `silent(1GiB)`} — through
+`bench`. **No GC cycle completed in any cell on any toolchain**, so the three
+GC configurations are interchangeable here and only the default rows are
+shown. Medians of the repeats that passed the late-op filter:
+
+| Book | Toolchain | kept | p50 | p99 | svc p99.9 | process alloc / run |
+|---|---|---|---|---|---|---|
+| A | go1.22.12 | 3/3 | 334 ns | 10 µs | 16 µs | 12.7 MiB |
+| A | go1.26.8 | 3/3 | 375 ns | 6.3 µs | 12 µs | 11.7 MiB |
+| A | go1.27.1 | 1/3 | 334 ns | 11 µs | 19 µs | 11.7 MiB |
+| B | go1.22.12 | 3/3 | 250 ns | 4.3 µs | 3.9 µs | 223 KiB |
+| B | go1.26.8 | 3/3 | 250 ns | 3.3 µs | 3.5 µs | 0 B |
+| B | go1.27.1 | 3/3 | 208 ns | 3.2 µs | 3.5 µs | 0 B |
+| C | go1.22.12 | 3/3 | 250 ns | 3.5 µs | 3.7 µs | 0 B |
+| C | go1.26.8 | 3/3 | 250 ns | 3.3 µs | 3.4 µs | 0 B |
+| C | go1.27.1 | 3/3 | 208 ns | 3.3 µs | 3.8 µs | 0 B |
+
+- **Allocation costs latency before the GC ever runs.** With zero cycles,
+  Book A is 2–3× slower than B and C at p99 and 3.5–5× slower in service
+  time: heap growth, allocator work, and cache misses on pointer-chasing.
+- **B and C are equivalent without GC pressure.** Pointer-freedom pays off
+  when the collector is active (E5), not when it's idle.
+- Book B allocates ~220 KiB per run on go1.22 and nothing on 1.26+; the hand-
+  tuned book hit an allocation the older compiler or runtime didn't avoid.
+- The go1.27.1 A row kept only one repeat: a disk scan on the machine
+  overlapped those runs (one discarded repeat had 7% late ops and a 16 ms p99
+  with no GC at all).
+
+Reproduce:
+
+```bash
+cd spike && GOTOOLCHAIN=go1.26.8 go run . -e1=false -e2=false -e3=false -e4 -dur=4s -warmup=1s -repeats=3
+```
+
+## 4. E3 — the cost of a generation check
+
+A handle with a generation counter (to detect use-after-free in a slab)
+versus a bare index, 50M lookups into a 40-byte slot array:
+
+| | go1.22.12 | go1.26.8 | go1.27.1 |
+|---|---|---|---|
+| bare index | 0.46 ns | 0.57 ns | 0.40 ns |
+| index + generation check | 0.54 ns | 0.61 ns | 0.56 ns |
+
+The check costs a fraction of a nanosecond once the branch is predicted —
+generational handles are effectively free. (The original spike reported
+0.23 ns: its loop results were never read and the compiler deleted the
+loops. Fixed.)
+
+## 5. Version notes
+
+- Every package behaves identically on 1.22, 1.26 and 1.27, including the
+  `GCPause*` report fields: the `/sched/pauses` histograms exist from Go 1.22.
+  Newer metrics the library can use when present (cgroup GOMAXPROCS counters,
+  1.25+; finalizer/cleanup and goroutine-state counters, 1.26+) are probed,
+  never required.
+- `hotpathcheck` builds with Go 1.26 (pinned `toolchain go1.26.8`) and vets
+  code for any version; the same binary reports the same diagnostics when
+  driven by go1.22's `go vet`.
+
+## 6. Known caveats
+
+1. One machine, one architecture (darwin/arm64). Linux/amd64 numbers will
+   differ in absolute terms; the E5 effect is a property of the Go runtime,
+   not of macOS.
+2. p99.9 and max are dominated by machine noise on a working laptop. For
+   numbers you intend to quote at p99.9, run on an isolated host.
+3. `alloc` columns are process-wide, including the harness's own setup — read
+   them as "did the process allocate", not "did the book".
+4. If `Late%` climbs in a cell with zero GC cycles, the machine couldn't keep
+   the rate; that's a capacity or interference signal, not a tail result.
+
+## 7. What changed vs the original spike
+
+| Original `spike` | Corrected `bench` / spike |
 |---|---|
 | Dropped ops >10 ms late without recording them | Records all; `Late%` column |
-| Stored raw samples + sorted at end | Fixed log-linear histogram, 2 ns/record, 0 allocs |
-| Cycle count only as GC evidence | cycles + forced split + alloc bytes + CPU-class attribution + pause/sched histograms |
-| `buf := make(); _ = buf` neighbors (dead code — allocated nothing) | escape-forced neighbors; alloc column now shows ~10 GiB |
-| E2 conclusion was unprovable (cycle=1, CPU contention equally plausible) | E5 attributes the mechanism: 338 cycles + 8.3 ms of mark-assist |
+| Stored raw samples and sorted at the end | Fixed log-linear histogram, ~2 ns/record, 0 allocs |
+| Cycle count as the only GC evidence | Cycles, forced split, process alloc, GC CPU classes, STW pause and scheduler histograms |
+| `buf := make(); _ = buf` neighbors (dead code — allocated nothing) | Escape-forced neighbors (~10 GiB per run) plus a non-allocating control |
+| E2 conclusion unprovable (cycle count 1, CPU contention equally plausible) | E5 separates them: busy-but-non-allocating neighbors don't reproduce the regression |
+| E3 loops deleted by the compiler (0.23 ns) | Results kept live; real cost measured |

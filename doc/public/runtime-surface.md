@@ -7,8 +7,9 @@ by `metrics.All()` on this machine; update timing and cost were measured with
 a dedicated lab harness and checked against `$GOROOT/src/runtime/metrics.go`
 and `mgc.go`.
 
-The spec names three metrics (`/gc/cycles/total`, `/gc/heap/allocs:{bytes,objects}`)
-and one histogram (`/sched/latencies`). The runtime exposes much more. This file
+go-hotpath reads the Go runtime through `runtime/metrics`. The obvious
+counters are `/gc/cycles/total`, `/gc/heap/allocs:{bytes,objects}`, and the
+`/sched/latencies` histogram, but the runtime exposes much more. This document
 audits the full surface, maps each GC mechanism to the counter that catches it,
 and states **when each counter actually updates**. That last part decides whether
 a counter is usable inside a short window.
@@ -35,7 +36,7 @@ a counter is usable inside a short window.
 
 ---
 
-## 1. What Rust gives that Go lacks — the honest gap
+## 1. What Rust gives that Go lacks
 
 Rust's determinism is three separate guarantees. hotpath can close each to a
 different degree:
@@ -44,7 +45,7 @@ different degree:
 |---|---|---|---|
 | No runtime memory work | No GC; ownership frees deterministically | Detect (`guard`), minimize (`profile`), enforce (`hotpathcheck`) | STW, assists, write barriers are process-wide and cannot be disabled per-goroutine |
 | Compile-time allocation proof | Borrow checker; `Box` is explicit | `//hotpath:noalloc` flags syntactic sites; `AllocsPerRun` is ground truth | Analyzer is pre-optimization — it sees `make()`, not whether it escapes |
-| Deterministic teardown | `Drop` | Preallocated pools + `RunGCAtQuietPoint` between sessions | No per-object destructor; finalizers/`runtime.AddCleanup` are GC-timed, never hot-path-safe |
+| Deterministic teardown | `Drop` | Preallocated pools + `profile.QuietGC` between sessions | No per-object destructor; finalizers/`runtime.AddCleanup` are GC-timed, never hot-path-safe |
 
 Two Rust habits worth importing as *conventions*, since the language won't
 enforce them:
@@ -53,7 +54,7 @@ enforce them:
   this; document it as the ownership rule for any structure annotated
   `//hotpath:noalloc`.
 - **Drop = region reset** → a slab/arena's bulk free approximates `Drop` for a
-  whole object graph. This is the eventual `hotpath/slab` story.
+  whole object graph.
 
 ## 2. The audited metric surface (go1.26.0)
 
@@ -72,7 +73,7 @@ hot window.
 
 The forced/automatic split is free attribution: a cycle during a window that was
 *forced* points at a `runtime.GC()` call inside the window (a warmup helper, a
-library, `RunGCAtQuietPoint` misplaced). An *automatic* cycle points at
+library, a misplaced `profile.QuietGC`). An *automatic* cycle points at
 allocation pressure. Different causes, different fixes.
 
 ### 2.2 Allocation pressure
@@ -123,7 +124,8 @@ So they are **not** a per-window signal. Inside a window they can only jump when
 cycle ends, and `GCCycles` already reports that event exactly. They are still the
 right **run-level** tool. Across a `bench` run with several cycles, "8.1 of 12.3
 GC CPU-seconds were mark assist" says which mechanism dominated. This is how the
-E2 rerun can separate GC work from plain CPU contention. Treat every value as the
+noisy-neighbor experiment (E5 in BENCHMARK.md) separates GC work from plain
+CPU contention. Treat every value as the
 runtime's documented "overestimate, compare only with other /cpu/classes".
 
 ### 2.5 Pauses and scheduler
@@ -163,7 +165,7 @@ OOM is on the way. The value is a cycle number, not a count, so `guard` reports
 
 Also worth reading once at `Apply` time: `/godebug/non-default-behavior/
 {containermaxprocs,updatemaxprocs}:events` — whether Go 1.25+'s cgroup-aware
-GOMAXPROCS is live. If it is and the user also sets `WithGOMAXPROCS`, the manual
+GOMAXPROCS is live. If it is and the user also sets `Profile.GOMAXPROCS`, the manual
 set *disables* the runtime's periodic cgroup re-check. `profile` warns on this
 in its package and field docs.
 
@@ -222,25 +224,16 @@ from `Result`. Test mode (`guard.Exact`) adds an exact `Mallocs` count from
 
 ## 4. What `profile` adds
 
-*Shipped.* The snapshot shipped as `profile.Snapshot` — the sketch below is
-the design note; field names in the package differ slightly.
+`profile.Read` returns a `Snapshot` built from one scalar read:
 
-```go
-// Design sketch — shipped shape is profile.Snapshot (see godoc).
-type MemorySnapshot struct {
-    // existing fields
-    GoHeapLive, GoHeapIdle, Stacks, RuntimeMeta, TotalGo uint64
-    CgroupLimit uint64
-    Headroom    int64
-
-    // additions — all scalar reads
-    ScannableHeap     uint64 // /gc/scan/heap — the GC surface area
-    LimiterLastCycle  uint64 // /gc/limiter/last-enabled (GC CPU limiter; 0 = never)
-    EffectiveGOGC     uint64 // /gc/gogc:percent — verify Apply
-    EffectiveMemLimit int64  // /gc/gomemlimit:bytes
-    EffectiveProcs    uint64 // /sched/gomaxprocs:threads
-}
-```
+| `Snapshot` field | Source |
+|---|---|
+| `GOGC`, `MemLimit`, `GOMAXPROCS` | `/gc/gogc:percent`, `/gc/gomemlimit:bytes`, `/sched/gomaxprocs:threads` — the effective values, also used by `Apply` to verify itself |
+| `HeapLive`, `HeapGoal` | `/gc/heap/live:bytes`, `/gc/heap/goal:bytes` — headroom to the next cycle |
+| `ScanHeap` | `/gc/scan/heap:bytes` — the GC's work surface |
+| `MemTotal` | `/memory/classes/total:bytes` |
+| `Goroutines` | `/sched/goroutines:goroutines` |
+| `CgroupMemLimit` | the effective cgroup v2/v1 memory limit (own cgroup or any ancestor), or -1 |
 
 Two behavioral notes — both shipped in the package docs:
 
@@ -248,10 +241,12 @@ Two behavioral notes — both shipped in the package docs:
    stops re-reading cgroup CPU limits. On Kubernetes with autoscaling limits
    this can leave a process permanently misconfigured. The package warns in
    the doc comments; it does not prevent it.
-2. `QuietGC` returns `QuietResult` — `{Duration, HeapLiveBefore,
-   HeapLiveAfter}` — not just bytes freed, so the caller knows the GC ran
-   and what it recovered. Note that `runtime.GC()` itself allocates: a forced
-   GC inside a `guard` window reports ~18–23 objects.
+2. `QuietGC` returns `QuietResult` — duration, heap object bytes before and
+   after (`Reclaimed()` is the difference), and `/gc/heap/live` before and
+   after. Note that `/gc/heap/live` only updates at the end of a cycle, so it
+   describes how the live set changed between cycles, not what one cycle
+   freed. `runtime.GC()` itself allocates: a forced GC inside a `guard`
+   window reports ~18–23 objects.
 
 ## 5. What `bench` adds
 
@@ -265,11 +260,13 @@ Two behavioral notes — both shipped in the package docs:
 - Run-level deltas of the §2.4 CPU-class counters: `MarkAssistCPU`,
   `GCTotalCPU`, plus `GCCycles` split into forced and automatic. These are valid
   only at this level, and only when at least one cycle completed in the run.
-  Call `runtime.GC()` after the run, then read, so the last partial cycle is
-  counted, and say in the report that this was done. Per-op tagging stays out.
-- `/sched/pauses/total/gc:seconds` (not the deprecated `/gc/pauses`) and
-  `/sched/latencies:seconds` histograms, read once before and once after the
-  run. Their deltas are the two distributions that explain the remaining tail
+  When a run completed a cycle, `bench` calls `runtime.GC()` after the run
+  and re-reads the CPU classes so the last partial cycle is counted; that
+  extra cycle is excluded from `GCCycles`. Per-op tagging stays out.
+- `/sched/pauses/total/gc:seconds` (not the deprecated `/gc/pauses`; Go
+  1.23+) and `/sched/latencies:seconds` histograms, read once before and once
+  after the run, with percentiles computed against the bucket boundaries the
+  runtime reports. Their deltas are the two distributions that explain the remaining tail
   once allocations are zero.
 
 ## 6. What `hotpathcheck` could also flag (not implemented)
@@ -287,21 +284,19 @@ analyzer; listed as considered future extensions:
   interface, `unsafe.Pointer`. No constructor required, works on the user's own
   `Order` struct today.
 
-## 7. Experience improvements beyond the four packages
+## 7. Ideas beyond the shipped packages (not implemented)
 
-These are the "how to improve the trading-platform experience" layer — cheap to
-document or build, none belong in v1 core:
+Patterns that build on this surface. None of them ship in go-hotpath today:
 
-**Flight recorder evidence (extension: `hotpath/trace`).** Go 1.25 shipped
+**Flight recorder evidence.** Go 1.25 shipped
 `runtime/trace.FlightRecorder`: a rolling window of the execution trace,
 `WriteTo(w)` on demand. Wire it so a `!Quiet` result dumps the last
 2 seconds of trace to a file — the user opens it in `go tool trace` and *sees*
-the mark-assist on their goroutine. That is the "prove it to your team" story
-made literal. Single-flight-recorder limit makes this a singleton; still an
-extension, not core.
+the mark-assist on their goroutine. The runtime allows one flight recorder
+per process, so this has to be a process-wide singleton.
 
 **Warmup recipe (`profile` docs or `profile.Warmup`).** Preallocate structures
-→ run synthetic traffic → `RunGCAtQuietPoint()` → `Apply(profile)`. Answers the
+→ run synthetic traffic → `profile.QuietGC()` → `profile.Apply(...)`. Answers the
 universal "first 10 seconds are noisy" complaint. ~15 lines.
 
 **GODEBUG preset documentation.** `disablethp=1` (Linux THP stalls),
@@ -312,11 +307,12 @@ with teeth.
 **The `explain` idea.** A `bench`/`guard` post-pass that reads the counters
 and emits "dominant mechanism: mark assist (8.1 CPU-s of 12.3 total GC CPU-s);
 lever: reduce allocations or raise GOGC." Diagnosis, not detection — the
-strongest UX differentiator available. v1.1 candidate.
+strongest UX improvement available.
 
-**Topology guidance.** E2 proved the in-process hole. When `guard` reports
+**Topology guidance.** E5 in BENCHMARK.md measured the in-process hole: a
+zero-allocation book's p99 moved 0.9 µs → 16.5 µs from neighbor allocation. When `guard` reports
 scheduler/GC noise that `profile` cannot fix, the answer is a separate process
-with a shared-memory ring (`hotpath/ipc` extension, deferred). Document the
+with a shared-memory ring. Document the
 decision boundary now so users don't expect `SilentWindow` to do process
 isolation.
 

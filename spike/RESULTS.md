@@ -9,11 +9,11 @@
 3. E2 does not prove a GC mechanism. GC cycle count stayed at 1 with and without the neighbor. C's max moved 787 µs → 3.04 ms while A's *improved* (1.24 ms → 773 µs). CPU/cache contention is an equally good explanation. The `bench` rerun will separate the two using `/cpu/classes/gc/*` run-level counters.
 4. **Ops more than 10 ms late are counted as dropped and are not recorded** in the latency histograms (`driver.go`). Every p99.9 and max below is therefore a lower bound — the true tails are at least this bad.
 5. One run per cell. Any number quoted publicly must be re-measured with ≥3 repeats.
-6. E3's 0.23 ns/op is below the cost of an L1 load — the compiler eliminated the work. Do not cite it.
+6. E3's original 0.23 ns/op was below the cost of an L1 load: the loop sums were never read, so the compiler deleted the loops. Fixed (sums kept live with `runtime.KeepAlive`); the rerun on go1.26.0 measures 0.60 ns/op bare vs 0.63 ns/op with the generation check — the check costs ~0.02 ns/op once the branch is predicted. The 0.23 figure below is invalid.
 
 **2026-10-06 post-restructure audit finding:**
 
-7. E2's noisy-neighbor goroutines were **dead-code eliminated** — `buf := make([]byte, 1024); _ = buf` allocates nothing; the compiler removes the whole thing. E2's "neighbor" was a no-op; its max movement was scheduler noise. Fixed (`allocSink.Store(&buf)`), and the corrected rerun — E5, driven by `bench` — is in `../BENCHMARK.md`. The real E5 shows 338–354 GC cycles, ~10 GiB allocated by the neighbors, and Book C's p99 moving 0.9 µs → 16.5 µs despite allocating 0 B itself.
+7. E2's noisy-neighbor goroutines were **dead-code eliminated** — `buf := make([]byte, 1024); _ = buf` allocates nothing; the compiler removes the whole thing. E2's "neighbor" was a no-op; its max movement was scheduler noise. Fixed (`allocSink.Store(&buf)`), and the corrected rerun — E5, driven by `bench` — is in `../BENCHMARK.md`. E5 now also runs a non-allocating busy control. Across go1.22.12, go1.26.8 and go1.27.1 (3 runs each), ~350 GC cycles per run and ~10 GiB of neighbor allocation move Book C's p99 from ~3 µs to 30–35 µs, while the control leaves it at 2.5–8.5 µs.
 
 ---
 

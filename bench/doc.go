@@ -28,9 +28,6 @@
 // the CPU-class read; that extra cycle is excluded from GCCycles and
 // GCForced.
 //
-// On Go versions before 1.23 the /sched/pauses histograms do not exist and
-// Report.GCPauseMax/GCPauseP99 stay zero; everything else is reported.
-//
 // For CI gates, Regressed returns the percentiles that slowed down by more
 // than 10% and 1 µs; Compare renders the full side-by-side.
 package bench

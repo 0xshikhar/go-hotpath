@@ -29,7 +29,7 @@ API.
 | Package | What it does | Cost |
 |---|---|---|
 | [`guard`](./guard) | Zero-allocation GC-interference windows (`Begin`/`End`) + exact `ReadMemStats` assertions for tests | ~450 ns, 0 allocs |
-| [`bench`](./bench) | Open-loop latency harness — coordinated-omission-safe, dual Latency/Service series, GC CPU attribution | 2.0 ns per record |
+| [`bench`](./bench) | Open-loop latency harness — coordinated-omission-safe, dual Latency/Service series, GC CPU attribution | ~2 ns per record |
 | [`profile`](./profile) | Reversible GOGC/GOMEMLIMIT/GOMAXPROCS control — `Apply`/`Session`, `SilentWindow`, `QuietGC`, `Snapshot` | startup/boundary |
 | [`hotpathcheck`](./cmd/hotpathcheck) | `go vet` analyzer enforcing `//hotpath:noalloc` across packages | CI gate |
 
@@ -88,22 +88,27 @@ fmt.Println(rep.String())   // dual Latency/Service series + GC attribution
 
 ## Benchmarks
 
-Measured on a real order-book workload — Apple M4 Pro, go1.26.0, open-loop
-100k ops/s. A zero-allocation book (Book C) ran clean in isolation; adding 4
-allocating neighbor goroutines triggered 338 GC cycles and moved its p99 from
-**0.9 µs to 16.5 µs** (18×) despite C allocating zero bytes itself — the
-process is the interference boundary.
+An order-book workload at 100k ops/s, open-loop, on an Apple M4 Pro; p99,
+median of 3 runs. Book C allocates nothing. Four neighbor goroutines in the
+same process either do nothing, spin without allocating (the control), or
+allocate:
 
-| Book (alloc/op) | Neighbor | p99 | p99.9 | GC cycles | Mark-assist CPU |
+| Book | Neighbors | go1.22.12 | go1.26.8 | go1.27.1 | GC cycles |
 |---|---|---|---|---|---|
-| C (0 objs) | none | 0.9 µs | 10.8 µs | 0 | 0 |
-| C (0 objs) | 4 allocating | 16.5 µs | 62.7 µs | 338 | 8.25 ms |
-| A (~3 objs) | none | 5.3 µs | 18.3 µs | 0 | 0 |
-| A (~3 objs) | 4 allocating | 27.1 µs | 70.3 µs | 354 | 9.19 ms |
+| C (0 allocs/op) | none | 3.1 µs | 3.2 µs | 3.3 µs | 0 |
+| C | 4 busy, non-allocating | 2.5 µs | 8.5 µs | 6.5 µs | 0 |
+| C | 4 allocating | **30 µs** | **33 µs** | **35 µs** | ~354 |
+| A (~3 allocs/op) | 4 allocating | 40 µs | 34 µs | 42 µs | ~363 |
 
-Full methodology, per-toolchain results (1.22 vs 1.26), and caveats:
-**[BENCHMARK.md](BENCHMARK.md)**. Reproduce:
-`go run ./spike -e1=false -e2=false -e3=false -e4 -e5 -dur=4s -repeats=3`
+A book that never allocates still takes a ~10× p99 hit from the GC work its
+neighbors cause, on every toolchain from 1.22 to 1.27, while its service
+time stays at ~3 µs. Busy neighbors that don't allocate don't reproduce
+it. The process is the interference boundary, and this is what `guard` and
+`bench` make visible.
+
+Methodology, the instrumentation-overhead table (`guard` window ~440 ns,
+`bench` record ~2 ns, both 0 allocs on all three toolchains), the
+no-GC-pressure matrix, and caveats: **[BENCHMARK.md](BENCHMARK.md)**.
 
 ## Scope — what this does not do
 
@@ -121,9 +126,9 @@ Full methodology, per-toolchain results (1.22 vs 1.26), and caveats:
 
 ## Requirements
 
-- **Go 1.26+ recommended** (developed and measured here); **minimum Go 1.22** —
-  on <1.23, `bench`'s `GCPause*` fields read 0 (`/sched/pauses` doesn't exist).
-  Everything else works.
+- **Go 1.26+ recommended**; **minimum Go 1.22**. Every package works the same
+  on 1.22–1.27 (benchmarked on 1.22.12, 1.26.8 and 1.27.1 — see
+  [BENCHMARK.md](BENCHMARK.md)).
 - `hotpathcheck` builds with Go 1.26+ but vets code of *any* version —
   `go install` auto-fetches the toolchain (Go 1.21+).
 - CI: 1.22 / 1.26 / 1.27 × linux/macOS. Zero library dependencies.

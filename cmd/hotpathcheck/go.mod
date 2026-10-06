@@ -2,6 +2,8 @@ module github.com/0xshikhar/go-hotpath/cmd/hotpathcheck
 
 go 1.26.0
 
+toolchain go1.26.8
+
 require golang.org/x/tools v0.50.0
 
 require (

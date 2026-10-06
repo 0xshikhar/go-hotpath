@@ -125,15 +125,14 @@ func runE2(rate int, duration time.Duration) string {
 	return out
 }
 
-// slotC mirrors book.OrderC's layout; kept local so E3 does not depend on
-// book internals.
+// slotC mirrors book.OrderC's 40-byte layout (the cache footprint is what E3
+// measures); only qty is read, so the other fields are blank padding.
 type slotC struct {
-	id    uint64
-	price int64
-	qty   int64
-	side  book.Side
-	prev  int32
-	next  int32
+	_   uint64 // id
+	_   int64  // price
+	qty int64
+	_   book.Side
+	_   [2]int32 // prev, next
 }
 
 func runE3() string {
@@ -171,6 +170,10 @@ func runE3() string {
 		}
 	}
 	dGen := time.Since(t0)
+
+	// Keep the sums live so the compiler cannot delete the timed loops.
+	runtime.KeepAlive(sum1)
+	runtime.KeepAlive(sum2)
 
 	nsBare := float64(dBare.Nanoseconds()) / float64(iterations)
 	nsGen := float64(dGen.Nanoseconds()) / float64(iterations)
@@ -274,3 +277,6 @@ func main() {
 // allocSink forces neighbor-goroutine allocations to escape. Stored as a
 // pointer so concurrent writers are race-clean.
 var allocSink atomic.Pointer[[]byte]
+
+// spinSink keeps the control neighbors' arithmetic observable.
+var spinSink atomic.Uint64

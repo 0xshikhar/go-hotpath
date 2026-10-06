@@ -39,8 +39,8 @@ type Report struct {
 	GCDedCPU      time.Duration // background mark workers
 	GCPauseCPU    time.Duration // CPU burned inside STW pauses
 
-	GCPauseMax      time.Duration // largest GC STW pause (runtime histogram; 0 before Go 1.23)
-	GCPauseP99      time.Duration // 0 before Go 1.23
+	GCPauseMax      time.Duration // largest GC STW pause (runtime histogram)
+	GCPauseP99      time.Duration
 	SchedLatencyP99 time.Duration // goroutine runnable-but-not-running p99
 
 	HeapLiveStart uint64

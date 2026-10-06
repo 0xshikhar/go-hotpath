@@ -47,13 +47,13 @@ func TestNewHistSetRejectsScalar(t *testing.T) {
 }
 
 func TestHistSetRead(t *testing.T) {
-	h := NewHistSet(MetricSchedLatencies, MetricHeapAllocsBySize)
+	h := NewHistSet(MetricSchedLatencies, MetricSchedPausesGC)
 	h.Read()
 	hist := h.Histogram(0)
 	if hist == nil || len(hist.Counts) == 0 {
 		t.Fatal("sched latencies histogram empty")
 	}
-	if got := h.Index(MetricHeapAllocsBySize); got != 1 {
+	if got := h.Index(MetricSchedPausesGC); got != 1 {
 		t.Fatalf("Index = %d, want 1", got)
 	}
 }

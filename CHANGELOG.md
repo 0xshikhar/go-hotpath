@@ -29,9 +29,19 @@ adheres to [Semantic Versioning](https://semver.org/).
   process's own cgroup from `/proc/self/cgroup` and takes the smallest limit
   on it or any ancestor (v2, then v1). Removed a false doc claim that the Go
   runtime derives its memory limit from the cgroup.
+- `bench`'s `GCPause*` fields were documented as zero before Go 1.23. The
+  `/sched/pauses` histograms exist from Go 1.22 (verified with `metrics.All`
+  on 1.21–1.27), so they are always reported on supported versions; the
+  version notes on the newer optional metrics (Go 1.25+/1.26+) are corrected
+  the same way.
 - `bench`: percentile edges now come from the runtime's own histogram
   buckets instead of a reproduced table; the op count no longer overflows on
   32-bit platforms; `New` rejects rates above 1e9 ops/s.
+- `cmd/hotpathcheck` pins `toolchain go1.26.8`, so `go install` on an older
+  Go 1.26.x builds the binary with the patched standard library (govulncheck
+  flagged three stdlib vulnerabilities reachable from go/types on go1.26.0).
+- Spike E3 timed loops whose results were never read, so the compiler
+  removed them (the 0.23 ns/op figure); the sums are now kept live.
 - hotpathcheck: methods of generic types resolve to their annotated
   declaration; a trailing `//hotpath:allow` no longer also silences the next
   line; `//hotpath:noallocx` no longer matches `noalloc`.
@@ -44,6 +54,12 @@ adheres to [Semantic Versioning](https://semver.org/).
   `math/bits`, and `sync/atomic` (except `atomic.Value`) count as verified;
   diagnostics print package-relative names (`&OrderA{...}`).
 - Runnable godoc examples for `profile` and `bench`.
+- Spike E5 adds a non-allocating busy-neighbor control and a GC
+  attribution table, separating GC interference from CPU contention.
+- BENCHMARK.md re-measured on go1.22.12, go1.26.8 and go1.27.1 (3 repeats,
+  medians). Corrected a false claim that the noisy-neighbor mark-assist CPU
+  ran in the zero-allocation book's goroutine — that counter is
+  process-wide, and a book that never allocates cannot assist.
 
 ## [v0.1.1] — 2026-10-06
 
@@ -61,7 +77,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 Note: `v0.1.0` was briefly tagged at the same content without the template
 files and is superseded by this release.
 
-## [v0.1.0] — 2026-10-06
+## v0.1.0 — 2026-10-06 (tag withdrawn; superseded by v0.1.1)
 
 First public release.
 
@@ -92,4 +108,5 @@ First public release.
 - On Go <1.23, `bench`'s `GCPause*` fields read 0 (`/sched/pauses` does not
   exist)
 
+[Unreleased]: https://github.com/0xshikhar/go-hotpath/compare/v0.1.1...HEAD
 [v0.1.1]: https://github.com/0xshikhar/go-hotpath/releases/tag/v0.1.1

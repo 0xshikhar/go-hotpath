@@ -163,27 +163,26 @@ var registry = map[string]metrics.ValueKind{
 	MetricGoroutines: metrics.KindUint64,
 
 	MetricSchedLatencies:   metrics.KindFloat64Histogram,
+	MetricSchedPausesGC:    metrics.KindFloat64Histogram, // Go 1.22+ (the module floor)
+	MetricSchedPausesOther: metrics.KindFloat64Histogram,
 	MetricHeapAllocsBySize: metrics.KindFloat64Histogram,
 	MetricHeapFreesBySize:  metrics.KindFloat64Histogram,
 }
 
 // optional metrics exist only on newer toolchains. They are excluded from
 // Check — probe them with Available before building a Set/HistSet that
-// reads them. Verified absent on go1.21: all of these.
+// reads them. Versions verified with metrics.All on each toolchain.
 var optional = map[string]metrics.ValueKind{
-	// Go 1.23+
-	MetricSchedPausesGC:      metrics.KindFloat64Histogram,
-	MetricSchedPausesOther:   metrics.KindFloat64Histogram,
+	// Go 1.25+ (cgroup-aware GOMAXPROCS godebug counters)
+	MetricGodebugContainerMaxProcs: metrics.KindUint64,
+	MetricGodebugUpdateMaxProcs:    metrics.KindUint64,
+	// Go 1.26+
 	MetricGoroutinesRunnable: metrics.KindUint64,
 	MetricGoroutinesRunning:  metrics.KindUint64,
 	MetricGoroutinesWaiting:  metrics.KindUint64,
-	// Go 1.24+
 	MetricThreadsTotal:       metrics.KindUint64,
 	MetricFinalizersQueued:   metrics.KindUint64,
 	MetricFinalizersExecuted: metrics.KindUint64,
 	MetricCleanupsQueued:     metrics.KindUint64,
 	MetricCleanupsExecuted:   metrics.KindUint64,
-	// Go 1.25+ (cgroup-aware scheduling godebug counters)
-	MetricGodebugContainerMaxProcs: metrics.KindUint64,
-	MetricGodebugUpdateMaxProcs:    metrics.KindUint64,
 }
