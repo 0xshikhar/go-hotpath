@@ -6,7 +6,7 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.22%2B-00ADD8.svg?style=flat-square&logo=go)](https://go.dev/)
 [![Go Reference](https://img.shields.io/badge/Go%20Reference-pkg.go.dev-00ADD8.svg?style=flat-square&logo=go)](https://pkg.go.dev/github.com/0xshikhar/go-hotpath)
-[![CI](https://img.shields.io/github/actions/workflow/status/0xshikhar/go-hotpath/ci.yml?branch=main&style=flat-square&logo=github-actions)](https://github.com/0xshikhar/go-hotpath/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/0xshikhar/go-hotpath/ci.yml?branch=master&style=flat-square&logo=github-actions)](https://github.com/0xshikhar/go-hotpath/actions/workflows/ci.yml)
 [![Guard Cost](https://img.shields.io/badge/guard%20window-452%20ns%20%2F%200%20allocs-brightgreen.svg?style=flat-square)](BENCHMARK.md)
 [![Hist Record](https://img.shields.io/badge/bench%20record-2.0%20ns%20%2F%200%20allocs-brightgreen.svg?style=flat-square)](BENCHMARK.md)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square)](LICENSE)
@@ -207,7 +207,7 @@ A closed loop can't see coordinated omission: when the system stalls, its own "w
 | [BENCHMARK.md](BENCHMARK.md) | Full methodology, all measured numbers, per-toolchain results, caveats |
 | [INTEGRATIONS.md](INTEGRATIONS.md) | Use cases: matching engine, HTTP service, CI gate, bench recipe |
 | [`guard/`](./guard) [`profile/`](./profile) [`bench/`](./bench) | Package docs (`go doc` / pkg.go.dev) - the API reference |
-| [`doc/research/runtime-surface.md`](doc/research/runtime-surface.md) | Audited `runtime/metrics` catalog - every counter we read, when it updates, what it costs |
+| [`doc/public/runtime-surface.md`](doc/public/runtime-surface.md) | Audited `runtime/metrics` catalog - every counter we read, when it updates, what it costs |
 | [`spike/`](spike/) | The order-book fixture - evidence, runnable (`go run ./spike`) |
 
 ---

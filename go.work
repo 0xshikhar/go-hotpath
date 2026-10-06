@@ -2,9 +2,11 @@ go 1.22.0
 
 use (
 	.
-	./doc/learn/labs/03-guard-cost
 	./spike
 )
+
+// doc/learn/labs/03-guard-cost is a learning lab that is not part of the
+// repo — add it back to `use` locally if you check the docs out.
 
 // cmd/hotpathcheck is deliberately NOT in this workspace: it is a separate
 // module (x/tools dep, newer toolchain), fully standalone — build and test it
