@@ -4,7 +4,7 @@
 // renames, removes, or re-kinds a metric, Check fails loudly instead of
 // letting a reader report a silent zero.
 //
-// Two facts from measurement (doc/learn/labs/03-guard-cost) shape this API:
+// Two measured facts shape this API:
 //
 //   - metrics.Read forces its sample buffer to the heap. A Set allocates its
 //     buffer once at construction so that Read performs zero allocations.

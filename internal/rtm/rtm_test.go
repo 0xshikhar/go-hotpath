@@ -135,3 +135,21 @@ func BenchmarkHistSetRead(b *testing.B) {
 		h.Read()
 	}
 }
+
+func TestAvailable(t *testing.T) {
+	for name := range registry {
+		if !Available(name) {
+			t.Errorf("required metric %s not available", name)
+		}
+	}
+	// Optional metrics may be absent on old toolchains, but when present
+	// their kind must match what the module declares.
+	for name, want := range optional {
+		if d, ok := catalog()[name]; ok && d.Kind != want {
+			t.Errorf("optional metric %s has kind %v, want %v", name, d.Kind, want)
+		}
+	}
+	if Available("/not/a/metric:bytes") {
+		t.Error("undeclared name reported available")
+	}
+}

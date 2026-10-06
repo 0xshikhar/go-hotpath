@@ -47,11 +47,18 @@ func Check() error {
 }
 
 // Available reports whether the named metric exists on this toolchain with
-// any kind. Use it to degrade gracefully on older Go releases — for example
-// /sched/pauses/* only exists on Go 1.23+.
+// the kind this module expects. Use it to degrade gracefully on older Go
+// releases — for example /sched/pauses/* only exists on Go 1.23+. A name not
+// declared in names.go is never available.
 func Available(name string) bool {
-	_, ok := catalog()[name]
-	return ok
+	want, ok := registry[name]
+	if !ok {
+		if want, ok = optional[name]; !ok {
+			return false
+		}
+	}
+	d, ok := catalog()[name]
+	return ok && d.Kind == want
 }
 
 func require(name string, scalar bool) metrics.ValueKind {
