@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -40,13 +41,24 @@ func TestSpikeBookFixture(t *testing.T) {
 	// go.work workspace is active (CI also tests with GOWORK=off).
 	vet := exec.Command("go", "vet", "-vettool", bin, "./book")
 	vet.Dir = root
-	out, _ := vet.CombinedOutput()
+	// A fresh cache so a stale vet result can't mask a regression.
+	vet.Env = append(os.Environ(), "GOCACHE="+t.TempDir())
+	out, err := vet.CombinedOutput()
 	text := string(out)
 
-	if !strings.Contains(text, "book_a.go") {
-		t.Fatalf("expected diagnostics in book_a.go, got:\n%s", text)
+	// The CI-gate contract: diagnostics fail the command and print as
+	// file:line text. (An x/tools too old for the go command's vet protocol
+	// prints raw JSON and exits 0 — a gate that never fails.)
+	if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() == 0 {
+		t.Fatalf("go vet must exit non-zero on diagnostics (err=%v):\n%s", err, text)
 	}
-	for _, want := range []string{"composite literal", "append"} {
+	if strings.Contains(text, `"posn"`) {
+		t.Fatalf("go vet printed raw JSON — vet protocol mismatch:\n%s", text)
+	}
+	if !strings.Contains(text, "book_a.go:") {
+		t.Fatalf("expected file:line diagnostics in book_a.go, got:\n%s", text)
+	}
+	for _, want := range []string{"composite literal", "append", "map assignment"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected a %q diagnostic, got:\n%s", want, text)
 		}

@@ -18,6 +18,9 @@ import (
 	"github.com/0xshikhar/go-hotpath/cmd/hotpathcheck/analyzer"
 )
 
+// multichecker, not singlechecker: under `go vet -vettool` (Go 1.26) a
+// singlechecker binary's diagnostics come back as raw JSON with exit status 0,
+// which would silently pass CI. multichecker prints them and exits non-zero.
 func main() {
 	multichecker.Main(analyzer.Analyzer)
 }
