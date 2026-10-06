@@ -1,7 +1,9 @@
 package bench
 
 import (
+	"math"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -125,15 +127,49 @@ func TestRunGCAttribution(t *testing.T) {
 	t.Logf("\n%s", rep.String())
 }
 
-func TestCompare(t *testing.T) {
+func TestRegressed(t *testing.T) {
 	base := Report{Label: "a", Rate: 1000}
 	next := Report{Label: "b", Rate: 1000}
+	base.Latency.P50 = 500 * time.Nanosecond
+	next.Latency.P50 = 900 * time.Nanosecond // +80% but < 1 µs → jitter, not a regression
 	base.Latency.P99 = 100 * time.Microsecond
-	next.Latency.P99 = 200 * time.Microsecond // +100µs, +100% → regression
+	next.Latency.P99 = 200 * time.Microsecond // +100% → regression
 	base.Latency.Max = time.Millisecond
-	next.Latency.Max = 1100 * time.Microsecond // +10% but exactly +100µs → flagged too
-	out := Compare(base, next)
-	t.Logf("\n%s", out)
+	next.Latency.Max = 1100 * time.Microsecond // exactly +10% → not over the bar
+
+	got := Regressed(base, next)
+	if len(got) != 1 || got[0] != "p99" {
+		t.Fatalf("Regressed = %v, want [p99]", got)
+	}
+	if out := Compare(base, next); strings.Count(out, "regression") != 1 {
+		t.Fatalf("Compare should mark exactly one row:\n%s", out)
+	}
+	if r := Regressed(base, base); len(r) != 0 {
+		t.Fatalf("identical reports regressed: %v", r)
+	}
+}
+
+func TestRuntimeBucketUpper(t *testing.T) {
+	b := []float64{math.Inf(-1), 0, 1e-6, 2e-6, math.Inf(1)}
+	if got := deltaQuantile([]uint64{0, 0, 10, 0}, b, 0.99); got != 2*time.Microsecond {
+		t.Fatalf("p99 = %v, want 2µs (upper edge)", got)
+	}
+	if got := deltaMax([]uint64{0, 0, 0, 3}, b); got != 2*time.Microsecond {
+		t.Fatalf("overflow max = %v, want its finite lower edge 2µs", got)
+	}
+}
+
+func TestNewRejectsBadRate(t *testing.T) {
+	for _, r := range []int{0, -1, int(time.Second) + 1} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("New(%d) did not panic", r)
+				}
+			}()
+			New(r)
+		}()
+	}
 }
 
 func BenchmarkHistogramRecord(b *testing.B) {

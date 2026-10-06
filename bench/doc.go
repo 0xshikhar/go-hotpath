@@ -12,9 +12,9 @@
 // lesson.
 //
 // The harness calls fn once per intended time, on one goroutine. fn must be
-// synchronous — for a pipelined op (enqueue now, complete elsewhere), stamp
-// the intended time into the message and measure on the far side; that is a
-// v1.x feature, not part of Run.
+// synchronous. For a pipelined op (enqueue now, complete elsewhere), stamp
+// the intended time into the message and measure on the far side — Run does
+// not do that for you.
 //
 // Ops are never dropped: an op that starts late is recorded with its full
 // lateness and counted in Report.Late. Dropping late samples would re-create
@@ -25,5 +25,12 @@
 // and deltas of the runtime's /sched/latencies and /sched/pauses/total/gc
 // histograms. CPU-class counters only advance at mark termination, so a run
 // that completed any GC cycle is flushed with a final runtime.GC() before
-// the second read — the report notes this and GCForced excludes it.
+// the CPU-class read; that extra cycle is excluded from GCCycles and
+// GCForced.
+//
+// On Go versions before 1.23 the /sched/pauses histograms do not exist and
+// Report.GCPauseMax/GCPauseP99 stay zero; everything else is reported.
+//
+// For CI gates, Regressed returns the percentiles that slowed down by more
+// than 10% and 1 µs; Compare renders the full side-by-side.
 package bench

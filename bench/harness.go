@@ -40,15 +40,15 @@ func WithGCBefore(on bool) Option { return func(c *config) { c.gcBefore = on } }
 // WithLabel sets the row label used by Report.String and Report.Markdown.
 func WithLabel(s string) Option { return func(c *config) { c.label = s } }
 
-// New creates a harness at the given target rate (ops/sec).
+// New creates a harness at the given target rate (ops/sec, 1 to 1e9).
 //
 // The contract for fn: the harness calls it once per intended send time, on a
 // single goroutine. fn must do one complete unit of work — the harness owns
 // the clock, so a duration loop inside fn breaks the intended-time
 // accounting.
 func New(rate int, opts ...Option) *Harness {
-	if rate <= 0 {
-		panic("bench: rate must be > 0")
+	if rate <= 0 || rate > int(time.Second) {
+		panic("bench: rate must be between 1 and 1e9 ops/sec")
 	}
 	c := config{
 		warmup:   2 * time.Second,
@@ -94,7 +94,6 @@ func (h *Harness) Run(fn func()) Report {
 	}
 
 	rc := newRunCapture()
-	edges := timeHistEdgesNS()
 
 	// Warmup: same pacing, nothing recorded.
 	if h.warmup > 0 {
@@ -107,7 +106,7 @@ func (h *Harness) Run(fn func()) Report {
 		}
 	}
 
-	total := int(h.rate * int(h.duration) / int(time.Second))
+	total := int(h.duration.Seconds() * float64(h.rate)) // no int overflow on 32-bit
 	if total < 1 {
 		total = 1
 	}
@@ -146,6 +145,11 @@ func (h *Harness) Run(fn func()) Report {
 
 	latDelta := histDelta(before.schedLat, after.schedLat)
 	pauseDelta := histDelta(before.pauseGC, after.pauseGC)
+	var pauseMax, pauseP99 time.Duration
+	if pauseDelta != nil {
+		pauseMax = deltaMax(pauseDelta, after.pauseGC.Buckets)
+		pauseP99 = deltaQuantile(pauseDelta, after.pauseGC.Buckets, 0.99)
+	}
 
 	return Report{
 		Label:      h.label,
@@ -171,9 +175,9 @@ func (h *Harness) Run(fn func()) Report {
 		GCDedCPU:      secToDur(after.dedicated - before.dedicated),
 		GCPauseCPU:    secToDur(after.pause - before.pause),
 
-		GCPauseMax:      deltaMax(pauseDelta, edges),
-		GCPauseP99:      deltaQuantile(pauseDelta, edges, 0.99),
-		SchedLatencyP99: deltaQuantile(latDelta, edges, 0.99),
+		GCPauseMax:      pauseMax,
+		GCPauseP99:      pauseP99,
+		SchedLatencyP99: deltaQuantile(latDelta, after.schedLat.Buckets, 0.99),
 
 		HeapLiveStart: before.heapLive,
 		HeapLiveEnd:   after.heapLive,

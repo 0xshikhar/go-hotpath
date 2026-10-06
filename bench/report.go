@@ -39,8 +39,8 @@ type Report struct {
 	GCDedCPU      time.Duration // background mark workers
 	GCPauseCPU    time.Duration // CPU burned inside STW pauses
 
-	GCPauseMax      time.Duration // largest GC STW pause (runtime histogram)
-	GCPauseP99      time.Duration
+	GCPauseMax      time.Duration // largest GC STW pause (runtime histogram; 0 before Go 1.23)
+	GCPauseP99      time.Duration // 0 before Go 1.23
 	SchedLatencyP99 time.Duration // goroutine runnable-but-not-running p99
 
 	HeapLiveStart uint64
@@ -74,7 +74,7 @@ func (r Report) String() string {
 
 const mdHeader = "| Label | Rate | Late% | p50 | p90 | p99 | p99.9 | max | svc p99.9 | GC | alloc | assist CPU |\n|---|---|---|---|---|---|---|---|---|---|---|---|\n"
 
-// Markdown returns a header plus one row — drop-in for a RESULTS.md table.
+// Markdown returns one table row matching MarkdownHeader.
 func (r Report) Markdown() string {
 	return fmt.Sprintf("| %s | %d | %.2f%% | %v | %v | %v | %v | %v | %v | %d | %s | %v |\n",
 		r.Label, r.Rate, float64(r.Late)*100/float64(r.Ops),
@@ -86,9 +86,46 @@ func (r Report) Markdown() string {
 // MarkdownHeader returns the table header matching Markdown rows.
 func MarkdownHeader() string { return mdHeader }
 
-// Compare renders base vs next with per-percentile deltas. A regression is
-// flagged when the slowdown exceeds both 10% and 1 µs, so sub-microsecond
-// jitter does not page anyone.
+// regressionRows pairs base and next latency percentiles for comparison.
+func regressionRows(base, next Report) []struct {
+	name string
+	b, n time.Duration
+} {
+	return []struct {
+		name string
+		b, n time.Duration
+	}{
+		{"p50", base.Latency.P50, next.Latency.P50},
+		{"p90", base.Latency.P90, next.Latency.P90},
+		{"p99", base.Latency.P99, next.Latency.P99},
+		{"p99.9", base.Latency.P999, next.Latency.P999},
+		{"p99.99", base.Latency.P9999, next.Latency.P9999},
+		{"max", base.Latency.Max, next.Latency.Max},
+	}
+}
+
+// regressed is the rule Compare and Regressed share: a slowdown counts only
+// when it exceeds both 10% and 1 µs, so sub-microsecond jitter never fails a
+// build.
+func regressed(b, n time.Duration) bool {
+	return n > b && n-b > time.Microsecond && float64(n) > 1.1*float64(b)
+}
+
+// Regressed reports the latency percentiles (p50 … max) where next is slower
+// than base by more than 10% and more than 1 µs. An empty result means no
+// regression — use it to fail a CI job; print Compare for the details.
+func Regressed(base, next Report) []string {
+	var out []string
+	for _, r := range regressionRows(base, next) {
+		if regressed(r.b, r.n) {
+			out = append(out, r.name)
+		}
+	}
+	return out
+}
+
+// Compare renders base vs next with per-percentile deltas, marking the rows
+// Regressed would report.
 func Compare(base, next Report) string {
 	var b strings.Builder
 	bl, nl := base.Label, next.Label
@@ -99,19 +136,9 @@ func Compare(base, next Report) string {
 		nl = "next"
 	}
 	fmt.Fprintf(&b, "compare %s → %s (rate %d/s)\n", bl, nl, next.Rate)
-	for _, row := range []struct {
-		name string
-		b, n time.Duration
-	}{
-		{"p50", base.Latency.P50, next.Latency.P50},
-		{"p90", base.Latency.P90, next.Latency.P90},
-		{"p99", base.Latency.P99, next.Latency.P99},
-		{"p99.9", base.Latency.P999, next.Latency.P999},
-		{"p99.99", base.Latency.P9999, next.Latency.P9999},
-		{"max", base.Latency.Max, next.Latency.Max},
-	} {
-		mark := " "
-		if row.n > row.b && row.n-row.b > time.Microsecond && float64(row.n) > 1.1*float64(row.b) {
+	for _, row := range regressionRows(base, next) {
+		mark := ""
+		if regressed(row.b, row.n) {
 			mark = " ← regression"
 		}
 		if row.b == 0 {

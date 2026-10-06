@@ -106,10 +106,12 @@ func (rc *runCapture) readCPUOnly(s *snap) {
 	s.gcTotal = rc.cpu.Value(cGCTotal).Float64()
 }
 
+// cloneHist copies Counts. Buckets is shared: runtime/metrics guarantees a
+// metric's bucket boundaries never change for the life of the process.
 func cloneHist(h *metrics.Float64Histogram) *metrics.Float64Histogram {
 	c := make([]uint64, len(h.Counts))
 	copy(c, h.Counts)
-	return &metrics.Float64Histogram{Counts: c}
+	return &metrics.Float64Histogram{Counts: c, Buckets: h.Buckets}
 }
 
 // histDelta returns after minus before counts, saturating per bucket (a
@@ -132,48 +134,20 @@ func histDelta(before, after *metrics.Float64Histogram) []uint64 {
 	return d
 }
 
-// --- runtime timeHistogram bucket edges --------------------------------------
-//
-// The runtime's sched/pause histograms all share one bucket layout defined in
-// runtime/histogram.go: min bucket bit 9, sub-bucket bits 2 (4 sub-buckets per
-// power of two, ~25% max relative error), max bucket bit 48 (exclusive), plus
-// underflow and overflow buckets. Edges reproduced here verbatim so a delta
-// of Counts can be turned into percentiles.
-
-const (
-	thMinBits = 9
-	thMaxBits = 48
-	thSubBits = 2
-	thSubN    = 1 << thSubBits
-	thBuckets = (thMaxBits-thMinBits+1)*thSubN + 2 // 162
-)
-
-// timeHistEdgesNS returns the lower edge of each bucket, in nanoseconds,
-// matching runtime timeHistogramMetricsBuckets. Length thBuckets+1; the last
-// edge is the overflow bound 2^47.
-func timeHistEdgesNS() []int64 {
-	e := make([]int64, thBuckets+1)
-	// First bucket: underflow (negative); edge[0] is -Inf conceptually.
-	e[0] = -1 << 62
-	for j := 0; j < thSubN; j++ {
-		e[j+1] = int64(uint64(j) << (thMinBits - 1 - thSubBits))
+// bucketUpper returns bucket i's upper boundary from the runtime-provided
+// edges (seconds). The open-ended overflow bucket reports its lower edge —
+// the largest finite statement the histogram can make.
+func bucketUpper(buckets []float64, i int) time.Duration {
+	e := buckets[i+1]
+	if math.IsInf(e, 1) {
+		e = buckets[i]
 	}
-	for i := thMinBits; i < thMaxBits; i++ {
-		for j := 0; j < thSubN; j++ {
-			ns := uint64(1) << (i - 1)
-			ns |= uint64(j) << (i - 1 - thSubBits)
-			idx := (i-thMinBits+1)*thSubN + j + 1
-			e[idx] = int64(ns)
-		}
-	}
-	e[len(e)-2] = int64(uint64(1) << (thMaxBits - 1))
-	e[len(e)-1] = 1<<62 - 1 // +Inf stand-in
-	return e
+	return time.Duration(e * float64(time.Second))
 }
 
-// deltaQuantile reports the p-quantile of a bucket-count delta, in
-// nanoseconds, using the runtime bucket's upper edge (conservative).
-func deltaQuantile(delta []uint64, edges []int64, p float64) time.Duration {
+// deltaQuantile reports the p-quantile of a bucket-count delta using each
+// bucket's upper edge (conservative: can only overestimate).
+func deltaQuantile(delta []uint64, buckets []float64, p float64) time.Duration {
 	var total uint64
 	for _, c := range delta {
 		total += c
@@ -188,18 +162,18 @@ func deltaQuantile(delta []uint64, edges []int64, p float64) time.Duration {
 	var cum uint64
 	for i, c := range delta {
 		cum += c
-		if cum >= target && i+1 < len(edges) {
-			return time.Duration(edges[i+1])
+		if cum >= target {
+			return bucketUpper(buckets, i)
 		}
 	}
 	return 0
 }
 
 // deltaMax returns the upper edge of the largest non-empty delta bucket.
-func deltaMax(delta []uint64, edges []int64) time.Duration {
+func deltaMax(delta []uint64, buckets []float64) time.Duration {
 	for i := len(delta) - 1; i >= 0; i-- {
-		if delta[i] > 0 && i+1 < len(edges) {
-			return time.Duration(edges[i+1])
+		if delta[i] > 0 {
+			return bucketUpper(buckets, i)
 		}
 	}
 	return 0
