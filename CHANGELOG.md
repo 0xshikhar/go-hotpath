@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [v0.1.1] — 2026-10-06
+
+### Added
+
+- `CONTRIBUTING.md`, `CHANGELOG.md`, issue and PR templates — standard
+  OSS hygiene set
+- `doc/public/runtime-surface.md` — the audited `runtime/metrics` catalog
+
+### Fixed
+
+- `go.work` no longer references an uncommitted module (clone-safe)
+- README CI badge tracks `master`; docs table links the published doc path
+
+Note: `v0.1.0` was briefly tagged at the same content without the template
+files and is superseded by this release.
+
 ## [v0.1.0] — 2026-10-06
 
 First public release.
@@ -35,4 +51,4 @@ First public release.
 - On Go <1.23, `bench`'s `GCPause*` fields read 0 (`/sched/pauses` does not
   exist)
 
-[v0.1.0]: https://github.com/0xshikhar/go-hotpath/releases/tag/v0.1.0
+[v0.1.1]: https://github.com/0xshikhar/go-hotpath/releases/tag/v0.1.1
