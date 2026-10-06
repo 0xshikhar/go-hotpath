@@ -25,6 +25,9 @@ type ExactResult struct {
 // ReadMemStats call costs roughly 20 µs of stop-the-world time. Use Exact in
 // tests and diagnostics, never on a hot path.
 //
+// The counts are process-wide: allocations by other goroutines while fn runs
+// are included, so measure from a quiet test (no t.Parallel).
+//
 // fn is run exactly once. Warm it up yourself if the first call would do
 // lazy initialization (map growth, pool priming) that shouldn't be measured.
 func Exact(fn func()) ExactResult {

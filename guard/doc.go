@@ -53,4 +53,7 @@
 //     preemption, and CPU contention are not GC; package bench measures
 //     those.
 //   - Assert and Exact stop the world (~20 µs each call) — tests only.
+//   - Exact counts are exact but still process-wide: allocations made by any
+//     goroutine while fn runs are included. Don't use Assert in tests marked
+//     t.Parallel, or while background goroutines are allocating.
 package guard
