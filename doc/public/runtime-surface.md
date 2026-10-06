@@ -264,7 +264,7 @@ Two behavioral notes — both shipped in the package docs:
   and re-reads the CPU classes so the last partial cycle is counted; that
   extra cycle is excluded from `GCCycles`. Per-op tagging stays out.
 - `/sched/pauses/total/gc:seconds` (not the deprecated `/gc/pauses`; Go
-  1.23+) and `/sched/latencies:seconds` histograms, read once before and once
+  1.22+) and `/sched/latencies:seconds` histograms, read once before and once
   after the run, with percentiles computed against the bucket boundaries the
   runtime reports. Their deltas are the two distributions that explain the remaining tail
   once allocations are zero.
@@ -310,7 +310,8 @@ lever: reduce allocations or raise GOGC." Diagnosis, not detection — the
 strongest UX improvement available.
 
 **Topology guidance.** E5 in BENCHMARK.md measured the in-process hole: a
-zero-allocation book's p99 moved 0.9 µs → 16.5 µs from neighbor allocation. When `guard` reports
+zero-allocation book's p99 moved ~3 µs → ~33 µs from neighbor allocation,
+while equally busy non-allocating neighbors barely moved it. When `guard` reports
 scheduler/GC noise that `profile` cannot fix, the answer is a separate process
 with a shared-memory ring. Document the
 decision boundary now so users don't expect `SilentWindow` to do process

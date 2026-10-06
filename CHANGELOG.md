@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [v0.1.2] — 2026-10-06
 
 ### Fixed
 
@@ -108,5 +108,5 @@ First public release.
 - On Go <1.23, `bench`'s `GCPause*` fields read 0 (`/sched/pauses` does not
   exist)
 
-[Unreleased]: https://github.com/0xshikhar/go-hotpath/compare/v0.1.1...HEAD
+[v0.1.2]: https://github.com/0xshikhar/go-hotpath/compare/v0.1.1...v0.1.2
 [v0.1.1]: https://github.com/0xshikhar/go-hotpath/releases/tag/v0.1.1
