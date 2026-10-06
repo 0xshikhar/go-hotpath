@@ -9,7 +9,8 @@ Four packages, one question each:
 | `bench` | What does my tail actually look like? | benchmarks, CI perf gates |
 | `hotpathcheck` | Did a code change introduce allocations? | `go vet` / CI |
 
-Requires Go 1.26+ (workspace-tested on 1.26 and 1.27; CI runs both).
+Library: Go 1.22+ (1.26+ recommended). `hotpathcheck` builds with Go 1.26+
+and vets code targeting any version.
 
 ---
 
@@ -34,7 +35,7 @@ func (e *Engine) applyBatch(batch []Command) {
 		e.apply(&batch[i])
 	}
 	if r := w.End(); !r.Quiet() {
-		metrics.GCInterference.Inc()
+		gcInterference.Inc() // your metrics counter
 		log.Printf("guard: %s", r.Explain())
 	}
 }
@@ -65,10 +66,12 @@ go install github.com/0xshikhar/go-hotpath/cmd/hotpathcheck@latest
 go vet -vettool=$(which hotpathcheck) ./...
 ```
 
-Every `new`/`make`/`append`/`&T{}`/conversion/closure/`go`/`defer` and every
-call to an unannotated function gets flagged. `//hotpath:allow` is the
-audited exception. The annotation is transitive — including into other
-packages via export facts.
+Every `new`/`make`/`append`/`&T{}`/conversion/closure/string
+concatenation/map write/`go`/`defer`, and every call to an unannotated
+function, gets flagged (`math`, `math/bits`, and `sync/atomic` are
+pre-verified). `//hotpath:allow` is the audited exception — trailing on the
+line, or alone on the line above. The annotation is transitive, including
+into other packages via analysis facts.
 
 ### Prove it at run time — in tests
 
@@ -81,30 +84,29 @@ func TestApplyIsAllocFree(t *testing.T) {
 }
 ```
 
-`Assert` uses `runtime.ReadMemStats` — exact, ~20 µs STW, tests only.
-`hotpathcheck` is the write-time gate; `Assert` is the run-time ground truth.
+`Assert` uses `runtime.ReadMemStats` — exact, ~20 µs STW, tests only. The
+counts are process-wide, so don't run it under `t.Parallel` or alongside
+allocating background goroutines. `hotpathcheck` is the write-time gate;
+`Assert` is the run-time ground truth.
 
 ## 2. A latency-sensitive HTTP/RPC service
 
-```go
-func main() {
-	// If the service is allocation-heavy, don't go silent — measure instead.
-	s, err := profile.Apply(profile.Default())
-	if err != nil { log.Fatal(err) }
-	_ = s // keep for Undo on shutdown, if your supervisor wants it
+An allocation-heavy service shouldn't go silent — measure instead. Expose
+the GC state on a debug endpoint (`profile.Read` is cold-path, ~300 ns):
 
-	http.HandleFunc("/debug/hotpath", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(profile.Read())
-	})
-}
+```go
+http.HandleFunc("/debug/hotpath", func(w http.ResponseWriter, r *http.Request) {
+	json.NewEncoder(w).Encode(profile.Read())
+})
 ```
 
 `Snapshot` answers the operational questions:
 
 - `HeapLive / HeapGoal` — headroom to the next GC trigger
 - `ScanHeap` — bytes the GC must actually walk (pointer-bearing)
-- `CgroupMemLimit` — kernel's hard cap; compare to `MemLimit` before
-  trusting a `SilentWindow`
+- `CgroupMemLimit` — the container's effective memory cap (own cgroup or
+  any ancestor; the Go runtime does not read it for you); compare to
+  `MemLimit` before trusting a `SilentWindow`
 
 ### When to go silent
 
@@ -118,11 +120,15 @@ of these hold:
 4. You watch `guard`'s `LimiterEngaged` — if it flips, the window broke.
 
 ```go
-s, _ := profile.Apply(profile.SilentWindow(512 << 20))
-// per batch boundary:
-res := profile.QuietGC()
-log.Printf("quietGC %v (live %d→%d)", res.Duration, res.HeapLiveBefore, res.HeapLiveAfter)
+s, err := profile.Apply(profile.SilentWindow(512 << 20))
+if err != nil {
+	log.Fatal(err) // a failed Apply has already restored the old settings
+}
 defer s.Undo()
+
+// at each batch boundary:
+res := profile.QuietGC()
+log.Printf("quietGC %v reclaimed %d bytes", res.Duration, res.Reclaimed())
 ```
 
 ## 3. CI / regression gate
@@ -131,18 +137,24 @@ Two layers — write-time and run-time:
 
 ```yaml
 # .github/workflows/ci.yml
-- run: go vet -vettool=$(which hotpathcheck) ./...   # hot-path regressions
-- run: go test -race -count=1 ./...                  # guard.Assert tests
+- run: go install github.com/0xshikhar/go-hotpath/cmd/hotpathcheck@latest
+- run: go vet -vettool=$(go env GOPATH)/bin/hotpathcheck ./...  # exits non-zero on new alloc sites
+- run: go test -race -count=1 ./...                             # guard.Assert tests
 ```
 
-For the benchmark gate, a tiny wrapper program that runs `bench` and fails
-on `Compare` regression >10% + >1µs:
+For a latency gate, a small program that runs `bench` against a stored
+baseline and fails when a percentile slows by more than 10% and 1 µs:
 
 ```go
-base := loadBaseline() // stored report
+base := loadBaseline() // a Report you stored earlier (e.g. as JSON)
 next := bench.New(100_000, bench.WithDuration(10*time.Second)).Run(engineOp)
-fmt.Print(bench.Compare(base, next)) // marks ← regression
+fmt.Print(bench.Compare(base, next))
+if r := bench.Regressed(base, next); len(r) > 0 {
+	log.Fatalf("latency regression at %v", r)
+}
 ```
+
+Shared CI runners are noisy; run latency gates on dedicated hardware.
 
 ## 4. Benchmarking your own hot path
 
@@ -155,14 +167,18 @@ h := bench.New(100_000,
 	bench.WithWarmup(2*time.Second),
 	bench.WithLabel("book-apply"),
 )
-rep := h.Run(func() { e.apply(&cmds[pos]); pos++; })
+rep := h.Run(func() {
+	e.apply(&cmds[pos%len(cmds)]) // the harness may run more ops than you pre-generated
+	pos++
+})
 fmt.Println(rep.String()) // dual series + GC CPU attribution
-fmt.Println(rep.Markdown())
+fmt.Print(bench.MarkdownHeader() + rep.Markdown())
 ```
 
 Rules: `fn` does exactly one unit of work; pre-generate inputs so the
-generator cost stays out of the measured region; always read both `Latency`
-(done−intended) and `Service` (done−actual) — the gap *is* the finding.
+generator cost stays out of the measured region (warmup ops call `fn` too);
+always read both `Latency` (done−intended) and `Service` (done−actual) — the
+gap *is* the finding.
 
 ## 5. The four-line integration summary
 
@@ -178,5 +194,5 @@ control:     profile.SilentWindow + QuietGC        → GC on your schedule
 - Per-goroutine GC exemption — the process is the interference unit; an
   allocating neighbor goroutine can still move your tail (measured: E5).
 - Compile-time guarantees — `noalloc` is heuristic; `AllocsPerRun` is truth.
-- Process isolation — if a shared process is the problem, the real fix is a
-  separate process (planned `hotpath/ipc` extension).
+- Process isolation — if a shared process is the problem, the fix is a
+  separate process for the hot path.

@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
 
 jobs:
@@ -22,6 +22,9 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
           check-latest: true
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
 
       # Core module: vet, race-enabled tests, and a benchmark print.
       # Benchmarks are printed, not gated — shared runners are too noisy
@@ -43,14 +46,11 @@ jobs:
           go vet ./...
           go test -race -count=1 ./...
 
-      # Lab modules are in the workspace; run their guard-cost tests so
-      # the measured claims in doc/research stay reproducible.
-      - name: lab tests
-        run: go test -count=1 ./doc/learn/labs/03-guard-cost/...
-
       # The analyzer module is standalone (not in go.work): it keeps the
-      # x/tools dep and a newer toolchain floor out of the library modules.
+      # x/tools dep and its Go 1.26 floor out of the library modules. Its
+      # fixture test also checks the go vet -vettool exit-status contract.
       - name: hotpathcheck tests
+        if: matrix.go != '1.22'
         working-directory: ./cmd/hotpathcheck
         run: |
           GOWORK=off go vet ./...

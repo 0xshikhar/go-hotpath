@@ -26,12 +26,11 @@ go test -race ./...
 cd spike && go test -race ./...
 ```
 
-Two modules are **deliberately outside the workspace** — run them with
-`GOWORK=off`:
+The analyzer is a **separate module outside the workspace** (it depends on
+`golang.org/x/tools` and needs Go 1.26+) — run it with `GOWORK=off`:
 
 ```bash
 cd cmd/hotpathcheck && GOWORK=off go test ./...
-cd doc/learn/labs/03-guard-cost && GOWORK=off go test .
 ```
 
 ## What CI checks
@@ -40,7 +39,7 @@ Matrix: Go **1.22 / 1.26 / 1.27** × ubuntu/macos. Before opening a PR run
 locally:
 
 ```bash
-gofmt -w .
+gofmt -l .            # must print nothing (CI fails otherwise)
 go vet ./...
 go test -race -count=1 ./...
 ```

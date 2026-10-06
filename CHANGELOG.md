@@ -4,6 +4,47 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **hotpathcheck never failed `go vet` on Go 1.26.** The module was pinned to
+  `golang.org/x/tools` v0.30.0, whose vet protocol predates Go 1.26's: under
+  `go vet -vettool`, diagnostics came back as raw JSON with exit status 0, so
+  a CI gate always passed. Now on v0.50.0 (module requires Go 1.26), and the
+  fixture test asserts a non-zero exit and `file:line` output.
+- CI never ran: the workflow triggered on `main`, the default branch is
+  `master`. It also ran tests from an uncommitted directory.
+- `profile.Apply` left knobs half-applied when read-back failed; it now rolls
+  back before returning the error.
+- `Session.Undo` skipped restoring a previous `GOGC=0` (it reused the
+  zero-means-keep sentinel). Restores now track which knobs were touched, and
+  a lowered memory limit is set before GOGC so the collector is never off
+  without a ceiling.
+- `QuietResult.HeapLiveBefore/After` were documented as what the cycle
+  reclaimed; `/gc/heap/live` only updates at cycle end, so they describe the
+  live-set change between cycles. Added `HeapObjectsBefore/After` and
+  `Reclaimed()` for the real number.
+- `CgroupMemoryLimit` only read the cgroup root; it now resolves the
+  process's own cgroup from `/proc/self/cgroup` and takes the smallest limit
+  on it or any ancestor (v2, then v1). Removed a false doc claim that the Go
+  runtime derives its memory limit from the cgroup.
+- `bench`: percentile edges now come from the runtime's own histogram
+  buckets instead of a reproduced table; the op count no longer overflows on
+  32-bit platforms; `New` rejects rates above 1e9 ops/s.
+- hotpathcheck: methods of generic types resolve to their annotated
+  declaration; a trailing `//hotpath:allow` no longer also silences the next
+  line; `//hotpath:noallocx` no longer matches `noalloc`.
+
+### Added
+
+- `bench.Regressed` — the percentiles that slowed by more than 10% and 1 µs,
+  for failing CI jobs (`Compare` marks the same rows).
+- hotpathcheck flags string concatenation and map writes; calls into `math`,
+  `math/bits`, and `sync/atomic` (except `atomic.Value`) count as verified;
+  diagnostics print package-relative names (`&OrderA{...}`).
+- Runnable godoc examples for `profile` and `bench`.
+
 ## [v0.1.1] — 2026-10-06
 
 ### Added

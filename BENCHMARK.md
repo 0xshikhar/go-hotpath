@@ -45,7 +45,7 @@ it costs ~2.5× — that's why the docs steer `guard` at batch/session windows.
 
 100k ops/s, 4 s cells, 3 repeats. **No GC cycle completed in any cell** — at
 this duration and allocation rate, none of the books trigger the collector.
-That is itself the honest result: at this scale the books' difference is
+That is itself the result: at this scale the books' difference is
 allocation-path cost, not GC interference.
 
 | Impl | Config | rep | p50 | p99 | p99.9 | svc p99.9 | alloc |
@@ -75,7 +75,7 @@ What it says, carefully:
 
 4 allocating goroutines alongside the book. **Audit note:** the original
 spike's neighbors were dead-code eliminated (`make` + `_ = buf`); this rerun
-forces real allocations, so these numbers are the *first* honest noisy-run.
+forces real allocations, so these are the first valid noisy-neighbor numbers.
 
 | Impl | Neighbor | p99 | p99.9 | max | svc p99.9 | GC cycles | alloc (proc-wide) | assist CPU |
 |---|---|---|---|---|---|---|---|---|

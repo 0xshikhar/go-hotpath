@@ -79,7 +79,7 @@ res := profile.QuietGC()   // collect once at a boundary of your choosing
 defer s.Undo()             // restore verified prior settings
 ```
 
-Honest tail measurement:
+Tail-latency measurement:
 
 ```go
 rep := bench.New(100_000, bench.WithDuration(10*time.Second)).Run(fn)
@@ -110,10 +110,12 @@ Full methodology, per-toolchain results (1.22 vs 1.26), and caveats:
 - Per-goroutine GC exemption is not possible in Go — the GC is process-wide.
   `guard` measures interference; it cannot prevent it.
 - `//hotpath:noalloc` detects *syntactic* alloc sites — a `make` the compiler
-  stack-promotes is still flagged. `testing.AllocsPerRun`/`guard.Exact` is
-  ground truth; the linter is the regression gate.
+  stack-promotes is still flagged, and implicit interface conversions or calls
+  through function values are not seen. `testing.AllocsPerRun`/`guard.Exact`
+  is ground truth; the linter is the regression gate.
 - Observed allocation counters are process-wide *lower bounds* (span-refill
-  granularity) — that's why `Exact`/`Assert` exist for tests.
+  granularity) — that's why `Exact`/`Assert` exist for tests. Those are exact
+  but still process-wide: don't use them under `t.Parallel`.
 - `profile` restores knob *values*; a `GOMAXPROCS` pin is one-way (it disables
   Go 1.25+ cgroup auto-detection permanently).
 
