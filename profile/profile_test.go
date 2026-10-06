@@ -3,6 +3,7 @@ package profile_test
 import (
 	"math"
 	"runtime"
+	"runtime/debug"
 	"testing"
 
 	"github.com/0xshikhar/go-hotpath/profile"
@@ -112,22 +113,42 @@ func TestGOMAXPROCSPin(t *testing.T) {
 	}
 }
 
+var garbageSink [][]byte
+
 func TestQuietGCReclaims(t *testing.T) {
-	// Make garbage: allocate and drop ~8 MiB.
-	junk := make([][]byte, 0, 64)
+	// Make ~8 MiB of garbage that is never marked live.
+	garbageSink = make([][]byte, 0, 64)
 	for i := 0; i < 64; i++ {
-		junk = append(junk, make([]byte, 128<<10))
+		garbageSink = append(garbageSink, make([]byte, 128<<10))
 	}
-	junk = nil
+	garbageSink = nil
 
 	res := profile.QuietGC()
 	if res.Duration <= 0 {
 		t.Fatal("QuietGC reported zero duration")
 	}
-	if res.HeapLiveAfter > res.HeapLiveBefore {
-		t.Fatalf("live heap grew across QuietGC: %d → %d", res.HeapLiveBefore, res.HeapLiveAfter)
+	if res.Reclaimed() < 4<<20 {
+		t.Fatalf("Reclaimed = %d, want >= 4 MiB of the 8 MiB dropped (objects %d → %d)",
+			res.Reclaimed(), res.HeapObjectsBefore, res.HeapObjectsAfter)
 	}
-	t.Logf("QuietGC: %v, live %d → %d", res.Duration, res.HeapLiveBefore, res.HeapLiveAfter)
+	t.Logf("QuietGC: %v, heap objects %d → %d (reclaimed %d)",
+		res.Duration, res.HeapObjectsBefore, res.HeapObjectsAfter, res.Reclaimed())
+}
+
+func TestUndoRestoresGOGCZero(t *testing.T) {
+	before := debug.SetGCPercent(0) // a real, if unusual, setting
+	defer debug.SetGCPercent(before)
+
+	s, err := profile.Apply(profile.Profile{Name: "t", GOGC: 200})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Undo(); err != nil {
+		t.Fatal(err)
+	}
+	if got := profile.Read().GOGC; got != 0 {
+		t.Fatalf("GOGC after Undo = %d, want 0", got)
+	}
 }
 
 func TestCgroupMemoryLimit(t *testing.T) {

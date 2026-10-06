@@ -82,7 +82,10 @@ var knobSet = rtm.NewSet(
 	rtm.MetricGOMAXPROCS,
 )
 
-func readKnobs() Knobs {
+// readKnobs is a variable so tests can simulate a read-back mismatch.
+var readKnobs = readKnobsRuntime
+
+func readKnobsRuntime() Knobs {
 	setsMu.Lock()
 	defer setsMu.Unlock()
 	knobSet.Read()
@@ -94,44 +97,78 @@ func readKnobs() Knobs {
 }
 
 // Session is an active profile application. Not safe for concurrent use;
-// sessions are expected to be created and undone by a single owner.
+// sessions are expected to be created and undone by a single owner. Undo
+// overlapping sessions in reverse order of Apply.
 type Session struct {
-	profile     Profile
-	before      Knobs
-	effective   Knobs
-	procsPinned bool
-	active      bool
+	profile   Profile
+	mask      knobMask
+	before    Knobs
+	effective Knobs
+	active    bool
+}
+
+// knobMask records which knobs a profile touches. Restores go through the
+// mask rather than the zero-means-keep sentinel, so a prior GOGC=0 is
+// restored faithfully.
+type knobMask struct{ gogc, memLimit, procs bool }
+
+func (p Profile) mask() knobMask {
+	return knobMask{gogc: p.GOGC != 0, memLimit: p.MemLimit != 0, procs: p.GOMAXPROCS != 0}
+}
+
+func (p Profile) knobs() Knobs {
+	return Knobs{GOGC: int64(p.GOGC), MemLimit: p.MemLimit, GOMAXPROCS: int64(p.GOMAXPROCS)}
+}
+
+// set applies the masked knobs of k. A memory limit that is being lowered is
+// set before GOGC, so there is never an instant with the collector off and
+// no ceiling.
+func set(m knobMask, k, current Knobs) {
+	limitFirst := m.memLimit && k.MemLimit < current.MemLimit
+	if limitFirst {
+		debug.SetMemoryLimit(k.MemLimit)
+	}
+	if m.gogc {
+		debug.SetGCPercent(int(k.GOGC))
+	}
+	if m.memLimit && !limitFirst {
+		debug.SetMemoryLimit(k.MemLimit)
+	}
+	if m.procs {
+		runtime.GOMAXPROCS(int(k.GOMAXPROCS))
+	}
+}
+
+// mismatch reports the first masked knob whose read-back value differs.
+func mismatch(name, what string, m knobMask, got, want Knobs) error {
+	switch {
+	case m.gogc && got.GOGC != want.GOGC:
+		return fmt.Errorf("profile %q: GOGC %s %d, want %d", name, what, got.GOGC, want.GOGC)
+	case m.memLimit && got.MemLimit != want.MemLimit:
+		return fmt.Errorf("profile %q: MemLimit %s %d, want %d", name, what, got.MemLimit, want.MemLimit)
+	case m.procs && got.GOMAXPROCS != want.GOMAXPROCS:
+		return fmt.Errorf("profile %q: GOMAXPROCS %s %d, want %d", name, what, got.GOMAXPROCS, want.GOMAXPROCS)
+	}
+	return nil
 }
 
 // Apply sets the profile's knobs, verifies the effective values through
 // runtime/metrics, and returns a Session that can undo them.
+//
+// If read-back does not match the request, Apply restores the previous
+// values before returning the error: a failed Apply leaves the runtime as it
+// found it.
 func Apply(p Profile) (*Session, error) {
 	if err := p.validate(); err != nil {
 		return nil, err
 	}
-	s := &Session{profile: p, active: true}
-	s.before = readKnobs()
+	s := &Session{profile: p, mask: p.mask(), before: readKnobs(), active: true}
 
-	if p.GOGC != 0 {
-		debug.SetGCPercent(p.GOGC)
-	}
-	if p.MemLimit != 0 {
-		debug.SetMemoryLimit(p.MemLimit)
-	}
-	if p.GOMAXPROCS != 0 {
-		s.procsPinned = true
-		runtime.GOMAXPROCS(p.GOMAXPROCS)
-	}
-
+	set(s.mask, p.knobs(), s.before)
 	s.effective = readKnobs()
-	if p.GOGC != 0 && s.effective.GOGC != int64(p.GOGC) {
-		return nil, fmt.Errorf("profile %q: GOGC readback %d, want %d", p.Name, s.effective.GOGC, p.GOGC)
-	}
-	if p.MemLimit != 0 && s.effective.MemLimit != p.MemLimit {
-		return nil, fmt.Errorf("profile %q: MemLimit readback %d, want %d", p.Name, s.effective.MemLimit, p.MemLimit)
-	}
-	if p.GOMAXPROCS != 0 && s.effective.GOMAXPROCS != int64(p.GOMAXPROCS) {
-		return nil, fmt.Errorf("profile %q: GOMAXPROCS readback %d, want %d", p.Name, s.effective.GOMAXPROCS, p.GOMAXPROCS)
+	if err := mismatch(p.Name, "readback", s.mask, s.effective, p.knobs()); err != nil {
+		set(s.mask, s.before, s.effective)
+		return nil, err
 	}
 	return s, nil
 }
@@ -146,8 +183,9 @@ func (s *Session) Effective() Knobs { return s.effective }
 // (i.e., Undo has not run).
 func (s *Session) Active() bool { return s.active }
 
-// Undo restores the pre-Apply values and marks the session inactive.
-// Calling Undo on an inactive session returns an error.
+// Undo restores the pre-Apply values of the knobs this profile changed and
+// marks the session inactive. Calling Undo on an inactive session returns an
+// error.
 //
 // If the profile pinned GOMAXPROCS, Undo restores the numeric value but
 // cannot re-enable automatic cgroup detection — see the package doc.
@@ -156,27 +194,6 @@ func (s *Session) Undo() error {
 		return fmt.Errorf("profile %q: session is not active", s.profile.Name)
 	}
 	s.active = false
-
-	// Restore in the same order Apply set them.
-	if s.profile.GOGC != 0 {
-		debug.SetGCPercent(int(s.before.GOGC))
-	}
-	if s.profile.MemLimit != 0 {
-		debug.SetMemoryLimit(s.before.MemLimit)
-	}
-	if s.profile.GOMAXPROCS != 0 {
-		runtime.GOMAXPROCS(int(s.before.GOMAXPROCS))
-	}
-
-	got := readKnobs()
-	if s.profile.GOGC != 0 && got.GOGC != s.before.GOGC {
-		return fmt.Errorf("profile %q: GOGC restore readback %d, want %d", s.profile.Name, got.GOGC, s.before.GOGC)
-	}
-	if s.profile.MemLimit != 0 && got.MemLimit != s.before.MemLimit {
-		return fmt.Errorf("profile %q: MemLimit restore readback %d, want %d", s.profile.Name, got.MemLimit, s.before.MemLimit)
-	}
-	if s.profile.GOMAXPROCS != 0 && got.GOMAXPROCS != s.before.GOMAXPROCS {
-		return fmt.Errorf("profile %q: GOMAXPROCS restore readback %d, want %d", s.profile.Name, got.GOMAXPROCS, s.before.GOMAXPROCS)
-	}
-	return nil
+	set(s.mask, s.before, readKnobs())
+	return mismatch(s.profile.Name, "restore readback", s.mask, readKnobs(), s.before)
 }

@@ -50,6 +50,7 @@ var snapSet = rtm.NewSet(
 // metrics semaphore once (~300 ns typical); do not call it per-request on a
 // contended process.
 func Read() Snapshot {
+	cgroup := CgroupMemoryLimit() // file I/O on Linux; keep it outside the lock
 	setsMu.Lock()
 	defer setsMu.Unlock()
 	snapSet.Read()
@@ -65,6 +66,6 @@ func Read() Snapshot {
 		ScanHeap:       int64(snapSet.Value(5).Uint64()),
 		MemTotal:       int64(snapSet.Value(6).Uint64()),
 		Goroutines:     int64(snapSet.Value(7).Uint64()),
-		CgroupMemLimit: CgroupMemoryLimit(),
+		CgroupMemLimit: cgroup,
 	}
 }
